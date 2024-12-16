@@ -18,14 +18,14 @@ def run_sniper_command(directory, cache_size_l2, cache_size_l2MB, prefetcher, br
         '-g', 'option'
     ]
     
-    # Add the perf_model configurations
-    command.append(f'perf_model/l2_cache/cache_size={cache_size_l2}')
-    command.append(f'perf_model/l2_cache/cache_size={cache_size_l2MB}MB')
-    command.append(f'perf_model/l2_cache/prefetcher={prefetcher}')
-    command.append(f'perf_model/branch_predictor/size={branch_predictor}')
+    # Add the perf_model configurations using .format() for compatibility with Python 3.4
+    command.append('perf_model/l2_cache/cache_size={}'.format(cache_size_l2))
+    command.append('perf_model/l2_cache/cache_size={}MB'.format(cache_size_l2MB))
+    command.append('perf_model/l2_cache/prefetcher={}'.format(prefetcher))
+    command.append('perf_model/branch_predictor/size={}'.format(branch_predictor))
     
     # Execute the command
-    print(f"Running command: {' '.join(command)}")
+    print("Running command: {}".format(" ".join(command)))
     subprocess.run(command)
 
 # Main function to generate configurations and run commands
@@ -36,7 +36,9 @@ def main():
     # Iterate through each combination and run the command
     for cache_size_l2, cache_size_l2MB, prefetcher, branch_predictor in configurations:
         # Create a directory name based on the parameters
-        directory = f"config_l2_{cache_size_l2}_l2MB_{cache_size_l2MB}_prefetch_{prefetcher}_branch_{branch_predictor}"
+        directory = 'config_l2_{}_l2MB_{}_prefetch_{}_branch_{}'.format(
+            cache_size_l2, cache_size_l2MB, prefetcher, branch_predictor
+        )
         
         # Ensure the directory exists (this is for logging, data collection, etc.)
         if not os.path.exists(directory):
