@@ -11,11 +11,11 @@ branch_predictor_sizes = [512, 1024, 2048, 4096]
 # Function to run the command with specified options
 def run_sniper_command(directory, cache_size_l2, cache_size_l2MB, prefetcher, branch_predictor):
     command = [
-        './run-sniper',
+        '/root/benchmarks/run-sniper',
         '--benchmarks', 'splash2-barnes-test-4',
         '-n', '4',
         '-d', directory,
-        '-g', 'option'
+        '-g'
     ]
     
     # Add the perf_model configurations using .format() for compatibility with Python 3.4
@@ -26,7 +26,7 @@ def run_sniper_command(directory, cache_size_l2, cache_size_l2MB, prefetcher, br
     
     # Execute the command
     print("Running command: {}".format(" ".join(command)))
-    subprocess.run(command)
+    subprocess.call(command)
 
 # Main function to generate configurations and run commands
 def main():
