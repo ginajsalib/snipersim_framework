@@ -10,10 +10,11 @@ branch_predictor_sizes = [512, 1024, 2048, 4096]
 
 # Function to run the command with specified options
 def run_sniper_command(directory, cache_size_l2, cache_size_l2MB, prefetcher, branch_predictor):
+    os.chdir("/root/benchmarks")
     command = [
-        '/root/benchmarks/run-sniper',
+        './run-sniper',
         '--benchmarks', 'splash2-barnes-test-4',
-        '-n', '4',
+        '-n',  '2', '-c', 'gainestown', '-c', 'rob',  '-c', 'big,LITTLE',
         '-d', directory,
         '-g'
     ]
@@ -36,7 +37,7 @@ def main():
     # Iterate through each combination and run the command
     for cache_size_l2, cache_size_l2MB, prefetcher, branch_predictor in configurations:
         # Create a directory name based on the parameters
-        directory = 'config_l2_{}_l2MB_{}_prefetch_{}_branch_{}'.format(
+        directory = '/root/snipersim_framework/config_l2_{}_l2MB_{}_prefetch_{}_branch_{}'.format(
             cache_size_l2, cache_size_l2MB, prefetcher, branch_predictor
         )
         
