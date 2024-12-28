@@ -6,11 +6,15 @@ import numpy as np
 
 # Function to run mcpat.py in each subdirectory and capture the output
 def run_mcpat(directory):
-    result = subprocess.run(
-        ['python3', '/root/sniper/tools/mcpat.py', '-d', directory],
-        capture_output=True, text=True
-    )
-    return result.stdout
+    result = subprocess.Popen(["python", "/root/sniper/tools/mcpat.py", "-d", directory], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    stdout, stderr = result.communicate()
+     # Check if there was an error during execution
+    if result.returncode != 0:
+        print("Error executing mcpat")
+        return None  # Handle error as needed (e.g., return None or raise an exception)
+
+    # Return the stdout output as a decoded string
+    return stdout.decode('utf-8')
 
 # Function to parse the output and extract power values
 def parse_power_data(output):
@@ -33,8 +37,10 @@ def traverse_and_process(base_directory):
     # Traverse all subdirectories
     for root, dirs, files in os.walk(base_directory):
         for dir in dirs:
+            if "config" not in dir:
+                continue
             dir_path = os.path.join(root, dir)
-            print(f"Processing {dir_path}...")
+            print("Processing {}...".format(dir_path))
             output = run_mcpat(dir_path)
             power_data = parse_power_data(output)
             power_data_dict[dir_path] = power_data
@@ -72,7 +78,7 @@ def plot_power_consumption(power_data_dict):
     plt.tight_layout()
     save_path = "/root/snipersim_framework"
     plt.savefig(save_path)
-        print(f"Plot saved to {save_path}")
+    print("Plot saved to {}".format(save_path))
     plt.show()
 
 # Main function
