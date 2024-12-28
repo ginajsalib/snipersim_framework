@@ -16,13 +16,14 @@ def parse_sim_out(file_path):
         branch_mispred_pattern = re.compile(r'num incorrect\s+\|\s+([\d,]+)')
         branch_mispredictions = [int(match.replace(',', '')) for match in branch_mispred_pattern.findall(content)]
 
-        # Extract L2 cache misses
-        l2_cache_misses_pattern = re.compile(r'Cache L2\s+[\s\w]+num cache misses\s+\|[\s\w]+([\d,]+)')
-        l2_cache_misses = [int(match.replace(',', '')) for match in l2_cache_misses_pattern.findall(content)]
+ # Extract L2 cache misses
+    # Extract L2 cache misses (updated to handle spaces and columns)
+    l2_cache_misses_pattern = re.compile(r'Cache L2\s+.*?num cache misses\s*\|\s*(\d[\d,]*)')
+    l2_cache_misses = [int(match.replace(',', '')) for match in l2_cache_misses_pattern.findall(content)]
 
-        # Extract L3 cache misses
-        l3_cache_misses_pattern = re.compile(r'Cache L3\s+[\s\w]+num cache misses\s+\|[\s\w]+([\d,]+)')
-        l3_cache_misses = [int(match.replace(',', '')) for match in l3_cache_misses_pattern.findall(content)]
+# Extract L3 cache misses (updated to handle spaces and columns)
+    l3_cache_misses_pattern = re.compile(r'Cache L3\s+.*?num cache misses\s*\|\s*(\d[\d,]*)')
+    l3_cache_misses = [int(match.replace(',', '')) for match in l3_cache_misses_pattern.findall(content)]
 
     return branch_mispredictions, l2_cache_misses, l3_cache_misses
 
@@ -71,8 +72,10 @@ def plot_data(all_data):
         l3_cache_misses = data['l3_cache_misses']
 
         if l2_cache_misses and l3_cache_misses:
-            axs[1].plot(range(len(l2_cache_misses)), l2_cache_misses, label=f'{dir_path} L2 Cache Misses', linestyle='--')
-            axs[1].plot(range(len(l3_cache_misses)), l3_cache_misses, label=f'{dir_path} L3 Cache Misses', linestyle=':')
+            axs[1].plot(range(len(l2_cache_misses)), l2_cache_misses, label='{} L2 Cache Misses'.format(dir_path), linestyle='--')
+            axs[1].plot(range(len(l3_cache_misses)), l3_cache_misses, label='{} L3 Cache Misses'.format(dir_path), linestyle=':')
+ 
+
 
     axs[1].set_title('L2 and L3 Cache Misses')
     axs[1].set_xlabel('Index (Different Timesteps or Trials)')
