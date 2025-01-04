@@ -4,7 +4,7 @@ from itertools import product
 
 # Define the parameter options
 cache_sizes_l2 = [256, 512, 1024]
-cache_sizes_l3MB = [4, 8, 12, 16]
+cache_sizes_l3MB = [4096, 8192, 12288, 16384]
 prefetchers = ["none", "simple", "ghb"]
 branch_predictor_sizes = [512, 1024, 2048, 4096]
 
@@ -21,7 +21,7 @@ def run_sniper_command(directory, cache_size_l2, cache_size_l3MB, prefetcher, br
     
     # Add the perf_model configurations using .format() for compatibility with Python 3.4
     command.append('perf_model/l2_cache/cache_size={}'.format(cache_size_l2))
-    command.append('perf_model/l2_cache/cache_size={}MB'.format(cache_size_l3MB))
+    command.append('perf_model/l3_cache/cache_size={}'.format(cache_size_l3MB))
     command.append('perf_model/l2_cache/prefetcher={}'.format(prefetcher))
     command.append('perf_model/branch_predictor/size={}'.format(branch_predictor))
     
