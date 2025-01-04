@@ -6,7 +6,7 @@ directory,branch_misprediction_1,l2_cache_miss_1,l3_cache_miss_1,time_ns_1,branc
 /root/snipersim_framework/config_l2_1024_l2MB_8_prefetch_none_branch_4096,117202,8600,6481,17492600,112909,6738,831,17492600
 /root/snipersim_framework/config_l2_256_l3MB_12288_prefetch_ghb_branch_2048,116811,10383,6420,18371000,111655,6085,876,18371000
 /root/snipersim_framework/config_l2_512_l2MB_8_prefetch_none_branch_2048,118874,8366,6599,16612400,115094,6689,746,16612400
-/root/snipersim_framework/config_baseline_l2_256_l3_4096_prefetcher_none_branch_512,,,,,,,,
+/root/snipersim_framework/config_baseline_l2_256_l3_4096_prefetcher_none_branch_512,227894,11185,7422,36481700,,,,
 /root/snipersim_framework/config_l2_512_l3MB_8192_prefetch_ghb_branch_512,118000,8724,6557,14475800,112884,6658,837,14475800
 /root/snipersim_framework/config_l2_512_l3MB_8192_prefetch_none_branch_512,116658,8806,6380,17465400,112756,6607,964,17465400
 /root/snipersim_framework/config_l2_512_l2MB_16_prefetch_ghb_branch_512,118403,8316,6589,17552800,115480,6742,759,17552800
