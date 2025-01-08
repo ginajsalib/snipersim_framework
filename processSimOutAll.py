@@ -2,6 +2,8 @@ import os
 import re
 import csv
 
+
+benchmark = 'radiosity'
 # Function to parse the 'sim.out' file and extract the required stats
 def parse_sim_out(file_path):
     branch_mispredictions = []
@@ -49,21 +51,22 @@ def traverse_and_parse(base_directory):
     
     # Traverse all subdirectories
     for root, dirs, files in os.walk(base_directory):
-        for file in files:
-            if file == 'sim.out':
-                file_path = os.path.join(root, file)
-                print("Processing {}...".format(file_path))
+        if benchmark in os.path.basename(root):
+            for file in files:
+                if file == 'sim.out':
+                    file_path = os.path.join(root, file)
+                    print("Processing {}...".format(file_path))
 
-                # Parse the sim.out file
-                branch_mispredictions, l2_cache_misses, l3_cache_misses, time_ns = parse_sim_out(file_path)
+                    # Parse the sim.out file
+                    branch_mispredictions, l2_cache_misses, l3_cache_misses, time_ns = parse_sim_out(file_path)
 
-                # Store data with the directory as the key
-                all_data[root] = {
-                    'branch_mispredictions': branch_mispredictions,
-                    'l2_cache_misses': l2_cache_misses,
-                    'l3_cache_misses': l3_cache_misses,
-                    'time_ns' : time_ns
-                }
+                    # Store data with the directory as the key
+                    all_data[root] = {
+                        'branch_mispredictions': branch_mispredictions,
+                        'l2_cache_misses': l2_cache_misses,
+                        'l3_cache_misses': l3_cache_misses,
+                        'time_ns' : time_ns
+                    }
    
 
     return all_data
@@ -115,9 +118,9 @@ def save_to_csv(data, filename):
 def main():
     base_directory = '/root/snipersim_framework/'  # Change to the directory you want to traverse
     all_data = traverse_and_parse(base_directory)
-    
+    csv_name = 'sim_out_data_' + benchmark + '.csv'
     # Save the parsed data to a CSV file
-    save_to_csv(all_data, 'sim_out_data.csv')
+    save_to_csv(all_data, csv_name)
 
 if __name__ == "__main__":
     main()
