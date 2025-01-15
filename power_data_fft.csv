@@ -106,6 +106,7 @@ Directory,cache,core,core-alu,core-core,core-fp,core-ifetch,core-int,core-mem,co
 /root/snipersim_framework/fft_config_l2_256_l3MB_16384_prefetch_simple_branch_512,6.21,8.16,0.61,1.98,1.59,0.81,0.68,0.53,1.96,1.36,4.86,0.6,0.85,3.41,0.03,19.27
 /root/snipersim_framework/fft_config_l2_1024_l3MB_16384_prefetch_simple_branch_2048,9.35,8.18,0.61,1.98,1.59,0.81,0.68,0.54,1.98,1.36,4.87,0.6,3.98,3.41,0.03,22.43
 /root/snipersim_framework/fft_config_l2_512_l3MB_4096_prefetch_none_branch_2048,7.15,8.2,0.62,2.01,1.59,0.81,0.68,0.54,1.95,1.37,4.87,0.6,1.77,3.41,0.03,20.25
+/root/snipersim_framework/fft_config_baseline_l2_256_l3_4096_prefetcher_none_branch_512,5.24,5.74,0.32,2.06,0.85,0.56,0.48,0.45,1.03,1.04,4.84,0.38,0.43,3.39,0.03,15.85
 /root/snipersim_framework/fft_config_l2_1024_l3MB_12288_prefetch_ghb_branch_1024,9.36,8.22,0.62,2.01,1.59,0.81,0.68,0.54,1.98,1.37,4.87,0.6,3.98,3.41,0.03,22.49
 /root/snipersim_framework/fft_config_l2_256_l3MB_12288_prefetch_ghb_branch_512,6.2,8.13,0.61,1.96,1.59,0.8,0.67,0.53,1.96,1.35,4.86,0.6,0.85,3.41,0.03,19.22
 /root/snipersim_framework/fft_config_l2_1024_l3MB_12288_prefetch_none_branch_1024,9.36,8.21,0.62,2.0,1.59,0.81,0.68,0.54,1.98,1.37,4.87,0.6,3.98,3.41,0.03,22.47
