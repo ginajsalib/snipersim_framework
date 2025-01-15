@@ -143,3 +143,4 @@ directory,branch_misprediction_1,l2_cache_miss_1,l3_cache_miss_1,time_ns_1,cycle
 /root/snipersim_framework/cholesky_config_l2_256_l3MB_12288_prefetch_ghb_branch_4096,50786,128372,50655,20686900,55027154,149328080,8488,33563,8509,20686900,55027154,82693467
 /root/snipersim_framework/cholesky_config_l2_1024_l3MB_16384_prefetch_none_branch_512,50798,84910,50666,20537800,54630548,149509014,8490,27910,8502,20537800,54630548,82757429
 /root/snipersim_framework/cholesky_config_l2_512_l3MB_16384_prefetch_simple_branch_1024,50831,102051,50654,20573900,54726574,149414164,8502,30423,8508,20573900,54726574,82734448
+/root/snipersim_framework/cholesky_config_baseline_l2_256_l3_4096_prefetcher_none_branch_512,57777,158876,59161,36692000,97600720,274317246,,,,,,
