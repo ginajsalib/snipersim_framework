@@ -143,4 +143,4 @@ directory,branch_misprediction_1,l2_cache_miss_1,l3_cache_miss_1,time_ns_1,cycle
 /root/snipersim_framework/fft_config_l2_256_l3MB_4096_prefetch_ghb_branch_4096,638,1641,1329,243100,646646,272206,503,1179,470,243100,646646,174321
 /root/snipersim_framework/fft_config_l2_1024_l3MB_8192_prefetch_none_branch_512,638,1644,1330,245800,653828,272100,504,1173,472,245800,653828,174246
 /root/snipersim_framework/fft_config_l2_1024_l3MB_12288_prefetch_none_branch_2048,669,1694,1335,246400,655424,273979,513,1201,485,246400,655424,175268
-/root/snipersim_framework/fft_config_baseline_l2_256_l3_4096_prefetcher_none_branch_512,990,1791,1787,249000,662340,444547
+/root/snipersim_framework/fft_config_baseline_l2_256_l3_4096_prefetcher_none_branch_512,990,1791,1787,249000,662340,444547,,,,,,
