@@ -3,9 +3,12 @@ import subprocess
 from itertools import product
 
 # Define the parameter options
-cache_sizes_l2 = [256, 512, 1024]
-cache_sizes_l3MB = [4096, 8192, 12288, 16384]
-prefetchers = ["none", "simple", "ghb"]
+#cache_sizes_l2 = [256, 512, 1024]
+cache_sizes_l2=[256]
+cache_sizes_l3MB=[8192]
+prefetchers=["none"]
+#cache_sizes_l3MB = [4096, 8192, 12288, 16384]
+#prefetchers = ["none", "simple", "ghb"]
 branch_predictor_sizes = [512, 1024, 2048, 4096]
 
 # Function to run the command with specified options
@@ -21,9 +24,10 @@ def run_sniper_command(directory, cache_size_l2, cache_size_l3MB, prefetcher, br
     
     # Add the perf_model configurations using .format() for compatibility with Python 3.4
     command.append('perf_model/l2_cache/cache_size={}'.format(cache_size_l2))
-    command.append('perf_model/l3_cache/cache_size={}'.format(cache_size_l3MB))
-    command.append('perf_model/l2_cache/prefetcher={}'.format(prefetcher))
-    command.append('perf_model/branch_predictor/size={}'.format(branch_predictor))
+    command.append(' -g perf_model/l3_cache/cache_size={}'.format(cache_size_l3MB))
+    command.append(' -g perf_model/l2_cache/prefetcher={}'.format(prefetcher))
+    command.append(' -g perf_model/branch_predictor/num_entries={}'.format(branch_predictor))
+    command.append(' -g perf_model/branch_predictor/num_ways=4')
     
     # Execute the command
     print("Running command: {}".format(" ".join(command)))
