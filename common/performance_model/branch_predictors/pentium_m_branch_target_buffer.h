@@ -34,8 +34,8 @@ public:
       : m_lru_use_count(0)
    {
       // Fetching NUM_WAYS and NUM_ENTRIES from the configuration
-      m_num_ways = static_cast<UInt32>(Sim()->getCfg()->getInt("perf_model/branch_predictor/num_ways", 0));
-      m_num_entries = static_cast<UInt32>(Sim()->getCfg()->getInt("perf_model/branch_predictor/num_entries", 0));
+      m_num_ways = static_cast<UInt32>(Sim()->getCfg()->getInt("perf_model/branch_predictor/num_ways"));
+      m_num_entries = static_cast<UInt32>(Sim()->getCfg()->getInt("perf_model/branch_predictor/num_entries"));
 
       // Initialize m_ways with the configured number of ways
       m_ways = std::vector<Way>(m_num_ways, Way(m_num_entries));
