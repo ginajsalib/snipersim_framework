@@ -1,1 +1,5 @@
-Directory
+Directory,cache,core,core-alu,core-core,core-fp,core-ifetch,core-int,core-mem,core-other,dcache,dram,icache,l2,l3,other,total
+/root/snipersim_framework/config_l2_256_l3MB_8192_prefetch_none_branch_1024_barnes,10.82,18.35,0.68,7.81,1.78,2.11,1.39,2.62,1.96,5.81,4.29,0.8,0.84,3.38,0.03,33.49
+/root/snipersim_framework/config_l2_256_l3MB_8192_prefetch_none_branch_2048_barnes,10.59,17.55,0.68,7.3,1.8,1.97,1.33,2.5,1.96,5.55,4.29,0.82,0.84,3.38,0.03,32.46
+/root/snipersim_framework/config_l2_256_l3MB_8192_prefetch_none_branch_512_barnes,10.58,17.95,0.67,7.62,1.76,2.06,1.36,2.51,1.96,5.59,4.28,0.78,0.84,3.38,0.03,32.85
+/root/snipersim_framework/config_l2_256_l3MB_8192_prefetch_none_branch_4096_barnes,9.87,15.94,0.67,6.38,1.77,1.76,1.21,2.19,1.96,4.88,4.28,0.78,0.84,3.38,0.03,30.13

@@ -1,1 +1,5 @@
-directory
+directory,branch_misprediction_1,l2_cache_miss_1,l3_cache_miss_1,time_ns_1,cycles_1,branch_misprediction_2,l2_cache_miss_2,l3_cache_miss_2,time_ns_2,cycles_2
+/root/snipersim_framework/config_l2_256_l3MB_8192_prefetch_none_branch_512_barnes,117764,10091,6625,18432600,49030716,112753,6070,758,18432600,49030716
+/root/snipersim_framework/config_l2_256_l3MB_8192_prefetch_none_branch_4096_barnes,118855,10215,6529,18427700,49017682,114713,6202,777,18427700,49017682
+/root/snipersim_framework/config_l2_256_l3MB_8192_prefetch_none_branch_1024_barnes,118149,10384,6415,17397900,46278414,112085,5846,888,17397900,46278414
+/root/snipersim_framework/config_l2_256_l3MB_8192_prefetch_none_branch_2048_barnes,118193,10385,6421,16378800,43567608,112565,6139,886,16378800,43567608
