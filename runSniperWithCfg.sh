@@ -12,7 +12,7 @@ benchmark="fft"
 
 NUM_CORES=2
 DISPATCH_WIDTH=4
-CFG_DIR="/root/benchmarks"
+CFG_DIR="/root/snipersim_framework"
 
 # Loop through all combinations
 for l2 in "${cache_sizes_l2[@]}"; do
@@ -26,15 +26,22 @@ for l2 in "${cache_sizes_l2[@]}"; do
 [perf_model/core/interval_timer]
 dispatch_width = ${DISPATCH_WIDTH}
 
-[perf_model/branch_predictor]
+[perf_model/core0/branch_predictor]
 num_entries = ${bp0}
+
+[perf_model/core1/branch_predictor]
+num_entries = ${bp1}
+
 EOF
 
           cat <<EOF > "$CFG_DIR/core1.cfg"
 [perf_model/core/interval_timer]
 dispatch_width = ${DISPATCH_WIDTH}
 
-[perf_model/branch_predictor]
+[perf_model/core0/branch_predictor]
+num_entries = ${bp0}
+
+[perf_model/core1/branch_predictor]
 num_entries = ${bp1}
 EOF
 
@@ -57,7 +64,8 @@ EOF
             "-g" "perf_model/l2_cache/cache_size=${l2}"
             "-g" "perf_model/l3_cache/cache_size=${l3}"
             "-g" "perf_model/l2_cache/prefetcher=${prefetch}"
-            "-g" "perf_model/branch_predictor/num_ways=4"
+            "-g" "perf_model/core0/branch_predictor/num_ways=4"
+            "-g" "perf_model/core1/branch_predictor/num_ways=4"
           )
 
           echo "Running: ${cmd[*]}"
