@@ -32,13 +32,15 @@ class PentiumMBranchTargetBuffer : BranchPredictor
 public:
    PentiumMBranchTargetBuffer()
       : m_lru_use_count(0)
-   {
-      // Fetching NUM_WAYS and NUM_ENTRIES from the configuration
-      m_num_ways = static_cast<UInt32>(Sim()->getCfg()->getInt("perf_model/branch_predictor/num_ways"));
-      m_num_entries = static_cast<UInt32>(Sim()->getCfg()->getInt("perf_model/branch_predictor/num_entries"));
+   { }
 
-      // Initialize m_ways with the configured number of ways
-      m_ways = std::vector<Way>(m_num_ways, Way(m_num_entries));
+   void initialize(core_id_t core_id)
+   {
+        std::string prefix = "perf_model/core" + std::to_string(core_id) + "/branch_predictor/";
+        m_num_ways = Sim()->getCfg()->getInt((prefix + "num_ways").c_str());
+        m_num_entries = Sim()->getCfg()->getInt((prefix + "num_entries").c_str());
+
+        m_ways = std::vector<Way>(m_num_ways, Way(m_num_entries));
    }
 
    bool predict(bool indirect, IntPtr ip, IntPtr target)
