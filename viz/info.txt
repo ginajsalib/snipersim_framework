@@ -1,0 +1,9 @@
+title = 'config_l2_256_l3MB_8192_prefetch_none_branch_512-512_barnes-intervals';
+num_intervals = '1199';
+interval = '16000000000';
+use_level2 = 1;
+use_mcpat = 1;
+use_level3 = 1;
+use_topo = 1;
+use_profile = 0;
+use_aso = 0;
