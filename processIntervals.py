@@ -3,6 +3,8 @@ import re
 import csv
 import subprocess
 
+BASE_DIR = '/root/snipersim_framework/'
+
 METRICS = [
     'branch_predictor.num-correct',
     'branch_predictor.num-incorrect',
@@ -20,150 +22,131 @@ METRICS = [
     'L3.store-misses'
 ]
 
-def run_command(command, cwd):
-    """Run a shell command in a given directory and return stdout."""
-    process = subprocess.Popen(command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    stdout, stderr = process.communicate()
-    if process.returncode != 0:
-        print('Command failed in %s: %s' % (cwd, stderr))
-        return None
-    return stdout
+POWER_METRICS = [
+    'power.core[0].total',
+    'power.core[0].dynamic',
+    'power.core[0].leakage',
+    'power.core[1].total',
+    'power.core[1].dynamic',
+    'power.core[1].leakage'
+]
 
-def get_available_periods_and_markers(directory):
-    """Run dumpstats.py -l and extract available periods and markers."""
-    output = run_command(['python', '/root/sniper/tools/dumpstats.py', '-l'], directory)
-    if output is None:
-        return [], {}
+def make_metric_regex(metric_name):
+    pattern = r'^{} = ([\d.e+-]+), ([\d.e+-]+)'.format(re.escape(metric_name))
+    return re.compile(pattern, re.MULTILINE)
 
-    periods = []
-    markers = {}
-
-    parts = output.strip().split(',')
-    for part in parts:
-        part = part.strip()
-        if part in ['start', 'roi-begin', 'roi-end', 'stop']:
-            markers[part] = part  # Save the marker name for CSV
-        elif part.startswith('periodic-'):
-            match = re.match(r'periodic-(\d+)', part)
-            if match:
-                periods.append(int(match.group(1)))
-
-    periods.sort()
-    return periods, markers
-
-def parse_dumpstats_output(output):
-    """Extract required metrics and markers from dumpstats output."""
-    data = {'start': None, 'roi-begin': None, 'roi-end': None, 'stop': None}
-    for metric in METRICS:
-        data[metric] = [None, None]
-
-    for line in output.splitlines():
-        line = line.strip()
-        if line.startswith('Start:'):
-            data['start'] = int(line.split(':')[1].strip())
-        elif line.startswith('ROI Begin:'):
-            data['roi-begin'] = int(line.split(':')[1].strip())
-        elif line.startswith('ROI End:'):
-            data['roi-end'] = int(line.split(':')[1].strip())
-        elif line.startswith('Stop:'):
-            data['stop'] = int(line.split(':')[1].strip())
-        else:
-            for metric in METRICS:
-                if metric in line:
-                    values = re.findall(r'\d+', line)
-                    if len(values) >= 2:
-                        data[metric] = [int(values[0]), int(values[1])]
-    return data
-
-def process_interval(directory, start, end, label):
-    """Run dumpstats.py for a specific interval and parse output."""
-    command = [
+def run_dumpstats(directory, start_marker, end_marker, power=False):
+    partial_arg = '{}:{}'.format(start_marker, end_marker)
+    cmd = [
         'python',
         '/root/sniper/tools/dumpstats.py',
-        '--partial=%s:%s' % (start, end)
+        '--partial=' + partial_arg
     ]
-    dumpstats_output = run_command(command, directory)
-    if dumpstats_output is None:
+    if power:
+        cmd.append('--power')
+
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=directory)
+    out, err = proc.communicate()
+    if proc.returncode != 0:
+        print("Error running dumpstats (power={}) in {}: {}".format(power, directory, err.decode('utf-8').strip()))
         return None
+    return out.decode('utf-8')
 
-    # Save the output to dumpstats.out
-    with open(os.path.join(directory, 'dumpstats.out'), 'a') as f:
-        f.write(dumpstats_output)
-        f.write('\n\n')
-
-    data = parse_dumpstats_output(dumpstats_output)
-    data['period'] = label
+def parse_metrics(output, metrics):
+    data = {}
+    for metric in metrics:
+        regex = make_metric_regex(metric)
+        match = regex.search(output)
+        if match:
+            data[metric] = (float(match.group(1)), float(match.group(2)))
+        else:
+            data[metric] = (0.0, 0.0)
     return data
 
-def process_directory(directory):
-    """Process all available periods and the ROI interval in the given directory."""
-    interval_data = []
-    periods, markers = get_available_periods_and_markers(directory)
-    if not periods or len(periods) < 2:
-        print('No valid periods found in %s' % directory)
-        return interval_data
+def get_period_markers(output):
+    markers = output.strip().split(',')
+    return [m.strip() for m in markers]
 
-    # Process periodic intervals
-    for i in range(len(periods) - 1):
-        start = 'periodic-%d' % periods[i]
-        end = 'periodic-%d' % periods[i + 1]
-        label = 'periodic-%d' % periods[i]
+def main():
+    all_results = []
 
-        data = process_interval(directory, start, end, label)
-        if data:
-            interval_data.append(data)
+    for root, dirs, files in os.walk(BASE_DIR):
+        if not ('sim.out' in files or 'stats.out' in files):
+            continue
 
-    # Process ROI interval if available
-    if 'roi-begin' in markers and 'roi-end' in markers:
-        data = process_interval(directory, 'roi-begin', 'roi-end', 'roi-interval')
-        if data:
-            interval_data.append(data)
+        print("=== Processing directory:", root)
 
-    # Add the markers to all rows
-    for interval in interval_data:
-        for key in ['start', 'roi-begin', 'roi-end', 'stop']:
-            if key in markers:
-                interval[key] = markers[key]
+        proc = subprocess.Popen(
+            ['python', '/root/sniper/tools/dumpstats.py', '-l'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=root)
+        out, err = proc.communicate()
+        if proc.returncode != 0:
+            print("Failed to list periods in {}: {}".format(root, err.decode('utf-8').strip()))
+            continue
 
-    return interval_data
+        periods = get_period_markers(out.decode('utf-8'))
 
-def traverse_and_process(base_directory):
-    """Walk through all directories and process benchmarks."""
-    results = {}
-    for root, dirs, files in os.walk(base_directory):
-        if 'sim.out' in files:
-            print('Processing directory: %s' % root)
-            results[root] = process_directory(root)
-    return results
+        try:
+            roi_begin_idx = periods.index('roi-begin')
+            roi_end_idx = periods.index('roi-end')
+        except ValueError:
+            print("ROI markers not found in {}, skipping.".format(root))
+            continue
 
-def save_to_csv(results, filename):
-    """Save collected data to CSV."""
-    fieldnames = ['directory', 'period', 'start', 'roi-begin', 'roi-end', 'stop']
-    for metric in METRICS:
-        fieldnames.append('%s_core0' % metric)
-        fieldnames.append('%s_core1' % metric)
+        interval_markers = periods[roi_begin_idx:roi_end_idx + 1]
 
-    with open(filename, 'wb') as csvfile:
+        for i in range(len(interval_markers) - 1):
+            start_marker = interval_markers[i]
+            end_marker = interval_markers[i + 1]
+
+            print("  Processing interval: {} -> {}".format(start_marker, end_marker))
+
+            output_metrics = run_dumpstats(root, start_marker, end_marker, power=False)
+            if output_metrics is None:
+                print("    [Warning] Failed to get metrics for interval, skipping.")
+                continue
+
+            output_power = run_dumpstats(root, start_marker, end_marker, power=True)
+            if output_power is None:
+                print("    [Warning] Failed to get power data for interval, skipping.")
+                continue
+
+            with open(os.path.join(root, 'dumpstats_{}_{}.out'.format(start_marker, end_marker)), 'w') as f:
+                f.write(output_metrics)
+            with open(os.path.join(root, 'dumpstats_power_{}_{}.out'.format(start_marker, end_marker)), 'w') as f:
+                f.write(output_power)
+
+            metrics_data = parse_metrics(output_metrics, METRICS)
+            power_data = parse_metrics(output_power, POWER_METRICS)
+
+            combined_data = {}
+            combined_data.update(metrics_data)
+            combined_data.update(power_data)
+            combined_data['directory'] = root
+            combined_data['period'] = '{}:{}'.format(start_marker, end_marker)
+            all_results.append(combined_data)
+
+    csv_file = os.path.join(BASE_DIR, 'interval_metrics_power.csv')
+    with open(csv_file, 'w') as csvfile:
+        fieldnames = ['directory', 'period']
+        for m in METRICS + POWER_METRICS:
+            fieldnames.append(m + '_core0')
+            fieldnames.append(m + '_core1')
+
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
 
-        for directory, intervals in results.items():
-            for interval in intervals:
-                row = {'directory': directory, 'period': interval.get('period', '')}
-                for key in ['start', 'roi-begin', 'roi-end', 'stop']:
-                    row[key] = interval.get(key, '')
+        for row in all_results:
+            csv_row = {'directory': row['directory'], 'period': row['period']}
+            for metric in METRICS + POWER_METRICS:
+                val0, val1 = row.get(metric, (0.0, 0.0))
+                csv_row[metric + '_core0'] = val0
+                csv_row[metric + '_core1'] = val1
+            writer.writerow(csv_row)
 
-                for metric in METRICS:
-                    row['%s_core0' % metric] = interval[metric][0] if interval[metric][0] is not None else ''
-                    row['%s_core1' % metric] = interval[metric][1] if interval[metric][1] is not None else ''
-                writer.writerow(row)
-
-    print('Results saved to %s' % filename)
-
-def main():
-    base_directory = '/root/snipersim_framework/'  # Update this if needed
-    results = traverse_and_process(base_directory)
-    save_to_csv(results, 'periodic_dumpstats.csv')
+    print("\nAll data written to", csv_file)
 
 if __name__ == '__main__':
     main()
