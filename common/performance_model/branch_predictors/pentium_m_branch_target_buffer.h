@@ -36,9 +36,9 @@ public:
 
    void initialize(core_id_t core_id)
    {
-        std::string prefix = "perf_model/core" + std::to_string(core_id) + "/branch_predictor/";
-        m_num_ways = Sim()->getCfg()->getInt((prefix + "num_ways").c_str());
-        m_num_entries = Sim()->getCfg()->getInt((prefix + "num_entries").c_str());
+//        std::string prefix = "perf_model/core" + std::to_string(core_id) + "/branch_predictor/";
+        m_num_ways = static_cast<UInt32>(Sim()->getCfg()->getIntArray("perf_model/branch_predictor/num_ways", core_id));
+        m_num_entries = static_cast<UInt32>(Sim()->getCfg()->getIntArray("perf_model/branch_predictor/num_entries", core_id));
 
         m_ways = std::vector<Way>(m_num_ways, Way(m_num_entries));
    }
