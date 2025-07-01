@@ -7,8 +7,8 @@ cd /root/benchmarks || exit 1
 cache_sizes_l2=(256)
 cache_sizes_l3MB=(8192)
 prefetchers=("none")
-branch_predictor_sizes=(512 1024 2048 4096)
-#branch_predictor_sizes=(512)
+#branch_predictor_sizes=(512 1024 2048 4096)
+branch_predictor_sizes=(512)
 benchmark="barnes"
 
 NUM_CORES=2
@@ -56,6 +56,7 @@ EOF
             "-c" "rob"
             "-c" "core0,core1"
             "-s" "periodicins-stats.py:500000"
+            "-s" "powertrace-ins.py"
             "-d" "$directory"
             "-g" "perf_model/l2_cache/cache_size=${l2}"
             "-g" "perf_model/l3_cache/cache_size=${l3}"
