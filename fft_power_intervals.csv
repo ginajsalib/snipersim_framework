@@ -1,0 +1,17 @@
+directory,btbCore0,btbCore1,file,period_start,period_end,total_power,l2_power,l3_power
+./config_l2_256_l3MB_8192_prefetch_none_branch_2048-2048_fft-intervals,2048,2048,power-roi-begin-roi-end-274357.txt,,,5.3618,0.0,0.0
+./config_l2_256_l3MB_8192_prefetch_none_branch_512-512_fft-intervals,512,512,power-roi-begin-roi-end-273029.txt,,,5.33298,0.0,0.0
+./config_l2_256_l3MB_8192_prefetch_none_branch_2048-4096_fft-intervals,2048,4096,power-roi-begin-roi-end-274580.txt,,,5.28369,0.0,0.0
+./config_l2_256_l3MB_8192_prefetch_none_branch_1024-1024_fft-intervals,1024,1024,power-roi-begin-roi-end-274327.txt,,,5.25752,0.0,0.0
+./config_l2_256_l3MB_8192_prefetch_none_branch_1024-2048_fft-intervals,1024,2048,power-roi-begin-roi-end-274301.txt,,,5.35615,0.0,0.0
+./config_l2_256_l3MB_8192_prefetch_none_branch_512-1024_fft-intervals,512,1024,power-roi-begin-roi-end-273250.txt,,,5.40183,0.0,0.0
+./config_l2_256_l3MB_8192_prefetch_none_branch_512-4096_fft-intervals,512,4096,power-roi-begin-roi-end-274468.txt,,,5.45589,0.0,0.0
+./config_l2_256_l3MB_8192_prefetch_none_branch_4096-512_fft-intervals,4096,512,power-roi-begin-roi-end-274479.txt,,,5.38692,0.0,0.0
+./config_l2_256_l3MB_8192_prefetch_none_branch_4096-2048_fft-intervals,4096,2048,power-roi-begin-roi-end-272993.txt,,,5.38995,0.0,0.0
+./config_l2_256_l3MB_8192_prefetch_none_branch_4096-1024_fft-intervals,4096,1024,power-roi-begin-roi-end-274318.txt,,,5.33514,0.0,0.0
+./config_l2_256_l3MB_8192_prefetch_none_branch_2048-512_fft-intervals,2048,512,power-roi-begin-roi-end-274451.txt,,,5.36801,0.0,0.0
+./config_l2_256_l3MB_8192_prefetch_none_branch_512-2048_fft-intervals,512,2048,power-roi-begin-roi-end-272160.txt,,,5.42977,0.0,0.0
+./config_l2_256_l3MB_8192_prefetch_none_branch_4096-4096_fft-intervals,4096,4096,power-roi-begin-roi-end-270342.txt,,,5.42273,0.0,0.0
+./config_l2_256_l3MB_8192_prefetch_none_branch_1024-4096_fft-intervals,1024,4096,power-roi-begin-roi-end-273334.txt,,,5.3416,0.0,0.0
+./config_l2_256_l3MB_8192_prefetch_none_branch_2048-1024_fft-intervals,2048,1024,power-roi-begin-roi-end-273262.txt,,,5.37729,0.0,0.0
+./config_l2_256_l3MB_8192_prefetch_none_branch_1024-512_fft-intervals,1024,512,power-roi-begin-roi-end-274770.txt,,,5.48429,0.0,0.0
