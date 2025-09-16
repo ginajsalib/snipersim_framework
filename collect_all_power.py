@@ -5,7 +5,7 @@ import parse_mcpat_power  # assumes parse_mcpat_power.py is in the same dir
 
 def collect_directories(base_dir):
     dirs = []
-    pattern = re.compile(r'config_l2_256_l3MB_8192_prefetch_none_branch_(\d+)-(\d+)_barnes-intervals$')
+    pattern = re.compile(r'config_l2_256_l3MB_8192_prefetch_none_branch_(\d+)-(\d+)_fft-intervals$')
     for entry in os.listdir(base_dir):
         path = os.path.join(base_dir, entry)
         if os.path.isdir(path):
@@ -30,7 +30,7 @@ def collect_all_power(base_dir, output_csv):
             results.append(data)
 
     # Write CSV
-    with open(output_csv, 'wb') as csvfile:
+    with open(output_csv, 'w', newline="", encoding="utf-8") as csvfile:
         fieldnames = ['directory', 'btbCore0', 'btbCore1', 'file', 'period_start', 'period_end', 'total_power', 'l2_power', 'l3_power']
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
