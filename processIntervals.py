@@ -108,22 +108,22 @@ def main():
                 print("    [Warning] Failed to get metrics for interval, skipping.")
                 continue
 
-            output_power = run_dumpstats(root, start_marker, end_marker, power=True)
-            if output_power is None:
-                print("    [Warning] Failed to get power data for interval, skipping.")
-                continue
+        #    output_power = run_dumpstats(root, start_marker, end_marker, power=True)
+         #   if output_power is None:
+         #       print("    [Warning] Failed to get power data for interval, skipping.")
+         #       continue
 
             with open(os.path.join(root, 'dumpstats_{}_{}.out'.format(start_marker, end_marker)), 'w') as f:
                 f.write(output_metrics)
-            with open(os.path.join(root, 'dumpstats_power_{}_{}.out'.format(start_marker, end_marker)), 'w') as f:
-                f.write(output_power)
+          #  with open(os.path.join(root, 'dumpstats_power_{}_{}.out'.format(start_marker, end_marker)), 'w') as f:
+          #      f.write(output_power)
 
             metrics_data = parse_metrics(output_metrics, METRICS)
-            power_data = parse_metrics(output_power, POWER_METRICS)
+       #     power_data = parse_metrics(output_power, POWER_METRICS)
 
             combined_data = {}
             combined_data.update(metrics_data)
-            combined_data.update(power_data)
+        #    combined_data.update(power_data)
             combined_data['directory'] = root
             combined_data['period'] = '{}:{}'.format(start_marker, end_marker)
             all_results.append(combined_data)
