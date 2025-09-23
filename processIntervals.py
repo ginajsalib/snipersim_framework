@@ -20,6 +20,19 @@ METRICS = [
     'L3.loads',
     'L3.stores',
     'L3.store-misses'
+    'L2.evict-E',
+'L2.evict-I',
+'L2.evict-M',
+'L2.evict-O',
+'L2.evict-prefetch',
+'L2.evict-S',
+'L2.evict-u',
+'L2.evict-warmup',
+'L1-D.loads', 'L1-D.stores'
+'rob_timer.uop_fp_addsub', 'rob_timer.uop_fp_muldiv', 'rob_timer.uops_x87'
+'rob_timer.uop_load', 'rob_timer.uop_store',
+'rob_timer.uop_generic',
+'rob_timer.uop_branch'
 ]
 
 POWER_METRICS = [
