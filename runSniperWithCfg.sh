@@ -6,7 +6,7 @@ cd /root/benchmarks || exit 1
 # Configuration parameters
 cache_sizes_l2=(256)
 cache_sizes_l3MB=(8192)
-prefetchers=("none")
+prefetchers=("none", "simple")
 #branch_predictor_sizes=(512 1024 2048 4096)
 branch_predictor_sizes=(512)
 benchmark="barnes"
@@ -45,7 +45,7 @@ EOF
           mkdir -p "$directory"
 
           # Build benchmark name
-          benchmark_name="splash2-${benchmark}-test-4"
+          benchmark_name="splash2-${benchmark}-small-4"
 
           # Build and run the sniper command
           cmd=(
@@ -63,6 +63,10 @@ EOF
             "-g" "perf_model/l2_cache/prefetcher=${prefetch}"
             "-g" "perf_model/branch_predictor/num_ways=4"
             "-g" "general/max_instructions=1000000000" 
+            "-g" "perf_model/l2_cache/prefetcher/prefetch_on_prefetch_hit=true"
+            "-g" "perf_model/l2_cache/prefetcher/simple/flows=16"
+            "-g" "perf_model/l2_cache/prefetcher/simple/num_prefetches=4"
+            "-g" "perf_model/l2_cache/prefetcher/simple/stop_at_page_boundary=false"
          )
 
           echo "Running: ${cmd[*]}"
