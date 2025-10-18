@@ -67,6 +67,7 @@ EOF
             "-g" "perf_model/l2_cache/prefetcher/simple/flows=16"
             "-g" "perf_model/l2_cache/prefetcher/simple/num_prefetches=4"
             "-g" "perf_model/l2_cache/prefetcher/simple/stop_at_page_boundary=false"
+            "-g" "perf_model/l2_cache/prefetcher/simple/flows_per_core=false"
          )
 
           echo "Running: ${cmd[*]}"
