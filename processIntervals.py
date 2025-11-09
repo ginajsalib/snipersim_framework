@@ -40,12 +40,6 @@ METRICS = [
 ]
 
 POWER_METRICS = [
-    'power.core[0].total',
-    'power.core[0].dynamic',
-    'power.core[0].leakage',
-    'power.core[1].total',
-    'power.core[1].dynamic',
-    'power.core[1].leakage'
 ]
 
 def make_metric_regex(metric_name):
@@ -157,12 +151,16 @@ def get_period_markers(output):
 def main():
     all_results = []
     benchmark_name = 'cholesky'
+    prefetcher_setting = "simple"
     
     for root, dirs, files in os.walk(BASE_DIR):
 
         current_dir = os.path.basename(root)
         if benchmark_name not in current_dir.lower():
             continue
+        if prefetcher_setting not in current_dir.lower():
+            continue
+
         if not ('sim.out' in files or 'stats.out' in files):
             continue
 
