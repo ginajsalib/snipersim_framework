@@ -57,7 +57,7 @@ EOF
             "-c" "core0,core1"
             "-s" "periodicins-stats.py:500000"
             "-s" "powertrace-ins.py"
-            "-s" "stop-by-icount:1000000000 --roi"
+            "-s" "stop-by-icount:1000000000" 
             "-d" "$directory"
             "-g" "perf_model/l2_cache/cache_size=${l2}"
             "-g" "perf_model/l3_cache/cache_size=${l3}"
