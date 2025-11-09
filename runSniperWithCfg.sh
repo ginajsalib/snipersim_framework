@@ -6,14 +6,14 @@ cd /root/benchmarks || exit 1
 # Configuration parameters
 cache_sizes_l2=(256)
 cache_sizes_l3MB=(8192)
-prefetchers=("none", "simple")
-#branch_predictor_sizes=(512 1024 2048 4096)
-branch_predictor_sizes=(512)
+prefetchers=("simple" "none")
+branch_predictor_sizes=(512 1024 2048 4096)
+#branch_predictor_sizes=(512)
 benchmark="barnes"
 
 NUM_CORES=2
 DISPATCH_WIDTH=4
-CFG_DIR="/root/snipersim_framework"
+CFG_DIR="/root/benchmarks"
 
 # Loop through all combinations
 for l2 in "${cache_sizes_l2[@]}"; do
@@ -41,7 +41,7 @@ num_entries = ${bp1}
 EOF
 
           # Construct the output directory name
-          directory="/root/snipersim_framework/config_l2_${l2}_l3MB_${l3}_prefetch_${prefetch}_branch_${bp0}-${bp1}_${benchmark}-intervals"
+          directory="/export/config_l2_${l2}_l3MB_${l3}_prefetch_${prefetch}_branch_${bp0}-${bp1}_${benchmark}-intervals"
           mkdir -p "$directory"
 
           # Build benchmark name
@@ -57,6 +57,7 @@ EOF
             "-c" "core0,core1"
             "-s" "periodicins-stats.py:500000"
             "-s" "powertrace-ins.py"
+            "-s" "stop-by-icount:1000000000 --roi"
             "-d" "$directory"
             "-g" "perf_model/l2_cache/cache_size=${l2}"
             "-g" "perf_model/l3_cache/cache_size=${l3}"
