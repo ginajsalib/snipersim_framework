@@ -1,4 +1,4 @@
-import subprocess
+timport subprocess
 import os
 import sys
 import argparse
@@ -47,7 +47,7 @@ def main():
     # --- Stage 2: Best Config & Training Data ---
     run_script("findBestConfigUsingPPW.py", merged_full, best_configs)
     run_script("createTrainingDataLagged.py", best_configs, training_data_lagged)
-    run_script("createTrainingDataWithLabels.py", training_data_lagged, training_data_complete)
+    run_script("createTrainingDataWithLabels.py", training_data_lagged, best_configs, training_data_complete)
 
     # --- Stage 3: Top 3 Configs Path ---
     run_script("findTop3ConfigsByPPW.py", merged_full, top3_configs)
@@ -55,8 +55,8 @@ def main():
 
     print("\n Pipeline finished successfully!")
     print(" Final outputs:")
-    print(f"   • {training_data_complete}  → Training data with BEST config")
-    print(f"   • {train_with_top3}        → Training data with TOP 3 configs")
+    print(f"    {training_data_complete}  Training data with BEST config")
+    print(f"    {train_with_top3}         Training data with TOP 3 configs")
 
 if __name__ == "__main__":
     main()
