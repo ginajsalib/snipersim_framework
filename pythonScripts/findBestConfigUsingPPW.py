@@ -29,7 +29,7 @@ def find_best_btbsizes_per_interval(
     df["end_num"] = df["period_end"].apply(parse_ins)
 
     # Drop invalid rows
-    df = df.dropna(subset=["start_num", "end_num", "PPW"])
+    df = df.dropna(subset=["start_num", "end_num", "ppw"])
 
     # Sort for grouping stability
     df = df.sort_values(by=["start_num", "end_num"]).reset_index(drop=True)
@@ -51,13 +51,13 @@ def find_best_btbsizes_per_interval(
     output_rows = []
     for group in groups:
         group_df = pd.DataFrame(group["rows"])
-        best_row = group_df.loc[group_df["PPW"].idxmax()]
+        best_row = group_df.loc[group_df["ppw"].idxmax()]
         output = {
             "interval_start": group["start"],
             "interval_end": group["end"],
             "btbCore0": best_row["btbCore0"],
             "btbCore1": best_row["btbCore1"],
-            "PPW": best_row["PPW"]
+            "PPW": best_row["ppw"]
         }
         if has_prefetcher:
             output["prefetcher"] = best_row["prefetcher"]
