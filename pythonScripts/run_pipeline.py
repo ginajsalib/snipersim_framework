@@ -46,7 +46,7 @@ def main():
 
     # --- Stage 2: Best Config & Training Data ---
     run_script("findBestConfigUsingPPW.py", merged_full, best_configs)
-    run_script("createTrainingDataLagged.py", best_configs, training_data_lagged)
+    run_script("createTrainingDataLagged.py", merged_full, training_data_lagged)
     run_script("createTrainingDataWithLabels.py", training_data_lagged, best_configs, training_data_complete)
 
     # --- Stage 3: Top 3 Configs Path ---
