@@ -10,7 +10,7 @@ def find_best_btbsizes_per_interval(
     df = pd.read_csv(input_csv)
     
     # Check required columns
-    required_cols = ["btbCore0", "btbCore1", "period_start", "period_end", "ppw"]
+    required_cols = ["btbCore0", "btbCore1", "period_start", "period_end", "ppw", "Prefetch"]
     for col in required_cols:
         if col not in df.columns:
             raise ValueError(f"Missing required column: {col}")
@@ -57,7 +57,7 @@ def find_best_btbsizes_per_interval(
             "interval_end": group["end"],
             "btbCore0": best_row["btbCore0"],
             "btbCore1": best_row["btbCore1"],
-            "prefetcher": best_row["prefetcher"],
+            "prefetcher": best_row["Prefetch"],
             "config": 
                 best_row['btb_core0'].astype(str) + '_' + 
                 best_row['btb_core1'].astype(str) + '_' + 
