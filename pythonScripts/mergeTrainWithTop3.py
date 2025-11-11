@@ -92,4 +92,9 @@ def merge_train_with_top3(train_csv="Training_Data_Complete.csv", top3_csv="Top3
 
 # Example usage
 if __name__ == "__main__":
-    merge_train_with_top3()
+    import sys
+    if len(sys.argv) >= 3:
+        train_csv = sys.argv[1] 
+        top3_csv = sys.argv[2]
+        output_csv = sys.argv[3]
+    merge_train_with_top3(train_csv, top3_csv, output_csv)
