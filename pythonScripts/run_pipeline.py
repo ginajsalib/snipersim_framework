@@ -4,17 +4,31 @@ import sys
 import argparse
 from datetime import datetime
 
+# def run_script(script_name, *args):
+#     """Run a Python script with optional arguments and handle errors."""
+#     print(f"\n Running {script_name} {' '.join(args)} ...")
+#     result = subprocess.run([sys.executable, script_name, *args], capture_output=True, text=True)
+#     if result.returncode != 0:
+#         print(f" Error in {script_name}:")
+#         print(result.stderr)
+#         sys.exit(result.returncode)
+#     else:
+#         print(f"{script_name} completed successfully.")
 def run_script(script_name, *args):
     """Run a Python script with optional arguments and handle errors."""
-    print(f"\n Running {script_name} {' '.join(args)} ...")
-    result = subprocess.run([sys.executable, script_name, *args], capture_output=True, text=True)
+    print(f"\n▶ Running {script_name} {' '.join(args)} ...")
+    
+    # Don't capture output - let it print directly
+    result = subprocess.run(
+        [sys.executable, script_name, *args]
+    )
+    
     if result.returncode != 0:
-        print(f" Error in {script_name}:")
-        print(result.stderr)
+        print(f" Error in {script_name}: Exit code {result.returncode}")
         sys.exit(result.returncode)
     else:
-        print(f"{script_name} completed successfully.")
-
+        print(f" {script_name} completed successfully.")
+        
 def main():
     parser = argparse.ArgumentParser(
         description="Run the full SniperSim data pipeline from perf & power CSVs to training datasets."
