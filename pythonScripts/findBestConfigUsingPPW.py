@@ -57,6 +57,12 @@ def find_best_btbsizes_per_interval(
             "interval_end": group["end"],
             "btbCore0": best_row["btbCore0"],
             "btbCore1": best_row["btbCore1"],
+            "prefetcher": best_row["prefetcher"],
+            "config": 
+                best_row['btb_core0'].astype(str) + '_' + 
+                best_row['btb_core1'].astype(str) + '_' + 
+                best_row['prefetcher'].astype(str),
+        
             "PPW": best_row["ppw"]
         }
         if has_prefetcher:
@@ -68,7 +74,7 @@ def find_best_btbsizes_per_interval(
 
     # Save to output CSV
     result_df.to_csv(output_csv, index=False)
-    print(f"✅ Best configurations saved to {output_csv}")
+    print(f" Best configurations saved to {output_csv}")
 
 
 # Example usage
