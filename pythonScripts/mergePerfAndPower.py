@@ -2,6 +2,8 @@ import pandas as pd
 import re
 import sys
 import traceback
+import gc
+import numpy as np
 
 def get_leaf_directory(path):
     """Extract the last part of a path (leaf directory)."""
@@ -46,7 +48,7 @@ def merge_sheets_by_directory_and_period(file1, file2, output_file,
                                           tolerance=100):
     """
     Merge two CSV files based on leaf directory and period matching.
-    Optimized for memory efficiency with chunked processing.
+    Ultra-fast version using interval-based filtering before merge.
     """
     
     try:
@@ -94,37 +96,87 @@ def merge_sheets_by_directory_and_period(file1, file2, output_file,
         df2['period_start_val'] = df2[period_start_col].apply(normalize_period_value)
         df2['period_end_val'] = df2[period_end_col].apply(normalize_period_value)
         
-        print(f"\n🔗 Merging on leaf directory...")
-        print(f"  Unique directories in file1: {df1['leaf_dir'].nunique()}")
-        print(f"  Unique directories in file2: {df2['leaf_dir'].nunique()}")
+        print(f"\n Merging with optimized algorithm...")
+        unique_dirs_1 = df1['leaf_dir'].nunique()
+        unique_dirs_2 = df2['leaf_dir'].nunique()
+        print(f"  Unique directories in file1: {unique_dirs_1}")
+        print(f"  Unique directories in file2: {unique_dirs_2}")
         
-        # Merge on leaf directory
-        merged = pd.merge(df1, df2, on='leaf_dir', suffixes=('_perf', '_power'), how='left')
-        print(f"  After merge: {len(merged)} rows")
-        print(f"  Memory usage: {merged.memory_usage(deep=True).sum() / 1024**2:.2f} MB")
+        # Get common directories
+        common_dirs = set(df1['leaf_dir'].unique()) & set(df2['leaf_dir'].unique())
+        print(f"  Common directories: {len(common_dirs)}")
         
-        # Filter within tolerance
-        print(f"\n🔍 Filtering by period tolerance (±{tolerance})...")
-        mask = (
-            (merged['period_start_val_perf'] - merged['period_start_val_power']).abs() <= tolerance
-        ) & (
-            (merged['period_end_val_perf'] - merged['period_end_val_power']).abs() <= tolerance
-        )
+        # FAST APPROACH: Use merge_asof for sorted interval matching
+        print(f"\n  Processing each directory with optimized interval matching...")
         
-        matched_count = mask.sum()
-        merged_filtered = merged[mask].copy()
+        result_chunks = []
+        total_matched = 0
         
-        print(f"  Matched rows: {matched_count} / {len(merged)} ({matched_count/len(merged)*100:.1f}%)")
+        for i, directory in enumerate(sorted(common_dirs), 1):
+            if i % 5 == 0 or i == 1:
+                print(f"    Processing directory {i}/{len(common_dirs)}: {directory}")
+            
+            # Filter both dataframes for current directory
+            df1_dir = df1[df1['leaf_dir'] == directory].copy()
+            df2_dir = df2[df2['leaf_dir'] == directory].copy()
+            
+            # Sort both by start period for efficient matching
+            df1_dir = df1_dir.sort_values('period_start_val').reset_index(drop=True)
+            df2_dir = df2_dir.sort_values('period_start_val').reset_index(drop=True)
+            
+            # Add temporary index to track original rows
+            df1_dir['_temp_idx1'] = df1_dir.index
+            df2_dir['_temp_idx2'] = df2_dir.index
+            
+            # Use merge_asof for fast interval matching on start values
+            merged_dir = pd.merge_asof(
+                df1_dir,
+                df2_dir,
+                left_on='period_start_val',
+                right_on='period_start_val',
+                direction='nearest',
+                tolerance=tolerance,
+                suffixes=('_perf', '_power')
+            )
+            
+            # Filter by end period tolerance (this is much faster on smaller dataset)
+            mask = (merged_dir['period_end_val_perf'] - merged_dir['period_end_val_power']).abs() <= tolerance
+            matched_dir = merged_dir[mask].copy()
+            
+            matched_count = len(matched_dir)
+            total_matched += matched_count
+            
+            if matched_count > 0:
+                # Drop temporary indices
+                matched_dir = matched_dir.drop(columns=['_temp_idx1', '_temp_idx2'], errors='ignore')
+                result_chunks.append(matched_dir)
+            
+            # Clean up to free memory
+            del df1_dir, df2_dir, merged_dir, matched_dir
+            gc.collect()
+        
+        print(f"\n  Total matched rows: {total_matched}")
+        
+        if not result_chunks:
+            print("No matching rows found!")
+            # Get all columns from both dataframes for empty result
+            all_cols = list(df1.columns) + [c for c in df2.columns if c not in df1.columns]
+            merged_filtered = pd.DataFrame(columns=all_cols)
+        else:
+            # Concatenate all chunks
+            print(f"  Combining {len(result_chunks)} chunks...")
+            merged_filtered = pd.concat(result_chunks, ignore_index=True)
         
         # Clean up temporary columns
         cols_to_drop = ['leaf_dir', 'period_start_val_perf', 'period_end_val_perf', 
-                        'period_start_val_power', 'period_end_val_power']
-        merged_filtered = merged_filtered.drop(columns=[c for c in cols_to_drop if c in merged_filtered.columns])
+                        'period_start_val_power', 'period_end_val_power', 
+                        '_temp_idx1', '_temp_idx2']
+        merged_filtered = merged_filtered.drop(columns=[c for c in cols_to_drop if c in merged_filtered.columns], errors='ignore')
         
         # Save output
-        print(f"\n💾 Saving to {output_file}...")
+        print(f"\n Saving to {output_file}...")
         merged_filtered.to_csv(output_file, index=False)
-        print(f" Success! Output saved with {len(merged_filtered)} rows")
+        print(f" Success! Output saved with {len(merged_filtered)} rows, {len(merged_filtered.columns)} columns")
         
         return merged_filtered
         
@@ -133,7 +185,7 @@ def merge_sheets_by_directory_and_period(file1, file2, output_file,
         print("Suggestions:")
         print("  1. Close other applications to free up memory")
         print("  2. Try processing on a machine with more RAM")
-        print("  3. Use a chunked processing approach (contact for implementation)")
+        print("  3. Reduce the tolerance parameter to get fewer matches")
         sys.exit(1)
         
     except FileNotFoundError as e:
