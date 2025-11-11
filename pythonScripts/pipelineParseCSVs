@@ -1,0 +1,44 @@
+import subprocess
+import sys
+import os
+
+def run_script(script_name, *args):
+    """Runs a Python script with given arguments, error if non-0 exit."""
+    cmd = [sys.executable, script_name] + list(args)
+    print(f"Running: {' '.join(cmd)}")
+    result = subprocess.run(cmd, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(f"Script {script_name} failed with exit code {result.returncode}")
+
+def main():
+    # Define file names / paths
+    raw_input = "raw_input.csv"
+    step1_out  = "step1_parsed.csv"
+    step2_out  = "step2_no_empty.csv"
+    step3_out  = "step3_perf_power.csv"
+    step4_out  = "step4_calc_cols.csv"
+    bestcfg_out = "BestConfigs.csv"
+    lagged_out = "Training_Data_Lagged.csv"
+    labels_out = "Training_Data_WithLabels.csv"
+    top3_out   = "Top3ConfigsPPW.csv"
+    train_with_top3_out = "TrainWithTop3.csv"
+
+    # 1 → 7: produce “best config” path
+    run_script("parseInputConfigsOnPerf.py",        raw_input, step1_out)
+    run_script("deleteEmptyRows.py",                step1_out, step2_out)
+    run_script("mergePerfAndPower.py",               step2_out, step3_out)
+    run_script("addCalculatedColumnsToMergedCsv.py", step3_out, step4_out)
+    run_script("findBestConfigUsingPPW.py",          step4_out, bestcfg_out)
+    run_script("createTrainingDataLagged.py",        step4_out, lagged_out)
+    run_script("createTrainingDataWithLabels.py",    lagged_out, bestcfg_out, labels_out)
+
+    print("Completed pipeline for Best‐Config output: ", labels_out)
+
+    # 8 → 9: produce “top 3 configs” path
+    run_script("findTop3ConfigsByPPW.py",             step4_out, top3_out)
+    run_script("mergeTrainWithTop3.py",               labels_out, top3_out, train_with_top3_out)
+
+    print("Completed pipeline for Top3 output: ", train_with_top3_out)
+
+if __name__ == "__main__":
+    main()
