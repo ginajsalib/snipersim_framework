@@ -34,7 +34,7 @@ def find_top3_configs_by_ppw(input_csv, output_csv="Top3ConfigsPPW.csv"):
     # Read input data
     df = pd.read_csv(input_csv)
 
-    required_cols = ["period_start", "PPW", "btbCore0", "btbCore1"]
+    required_cols = ["period_start", "ppw", "btbCore0", "btbCore1"]
     for col in required_cols:
         if col not in df.columns:
             raise ValueError(f"Missing required column: {col}")
@@ -49,33 +49,33 @@ def find_top3_configs_by_ppw(input_csv, output_csv="Top3ConfigsPPW.csv"):
 
     for norm_period, group in grouped:
         # Drop rows with NaN PPW
-        group = group.dropna(subset=["PPW"])
+        group = group.dropna(subset=["ppw"])
         if group.empty:
             continue
 
         # Sort by PPW ascending
-        group_sorted = group.sort_values(by="PPW", ascending=True).reset_index(drop=True)
+        group_sorted = group.sort_values(by="ppw", ascending=True).reset_index(drop=True)
 
         # Get top 3 configs (fill with best if fewer)
         best = group_sorted.iloc[0]
         second = group_sorted.iloc[1] if len(group_sorted) > 1 else best
         third = group_sorted.iloc[2] if len(group_sorted) > 2 else second
 
-        diff_best_second = second["PPW"] - best["PPW"]
-        diff_best_third = third["PPW"] - best["PPW"]
+        diff_best_second = second["ppw"] - best["ppw"]
+        diff_best_third = third["ppw"] - best["ppw"]
 
         results.append({
             "period_start": norm_period,
             "btbCore0_best": best["btbCore0"],
             "btbCore1_best": best["btbCore1"],
-            "PPW_best": best["PPW"],
+            "PPW_best": best["ppw"],
             "btbCore0_2nd": second["btbCore0"],
             "btbCore1_2nd": second["btbCore1"],
-            "PPW_2nd": second["PPW"],
+            "PPW_2nd": second["ppw"],
             "Diff_best_2nd": diff_best_second,
             "btbCore0_3rd": third["btbCore0"],
             "btbCore1_3rd": third["btbCore1"],
-            "PPW_3rd": third["PPW"],
+            "PPW_3rd": third["ppw"],
             "Diff_best_3rd": diff_best_third
         })
 
@@ -88,7 +88,7 @@ def find_top3_configs_by_ppw(input_csv, output_csv="Top3ConfigsPPW.csv"):
     ])
 
     result_df.to_csv(output_csv, index=False)
-    print(f"✅ Top 3 configs per period saved to: {output_csv}")
+    print(f"Top 3 configs per period saved to: {output_csv}")
     print(f"Total periods processed: {len(result_df)}")
 
 
