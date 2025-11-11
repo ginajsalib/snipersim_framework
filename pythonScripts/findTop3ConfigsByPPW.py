@@ -1,6 +1,7 @@
 import pandas as pd
 import math
 import os
+import sys
 
 def normalize_period_value(val):
     """Normalize 'period_start' values similar to the Apps Script version."""
@@ -93,6 +94,7 @@ def find_top3_configs_by_ppw(input_csv, output_csv="Top3ConfigsPPW.csv"):
 
 # Example usage
 if __name__ == "__main__":
+
     if len(sys.argv) >= 2:
         input_csv = sys.argv[1] 
         output_csv = sys.argv[2]
