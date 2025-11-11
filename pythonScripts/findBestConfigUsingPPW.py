@@ -53,8 +53,8 @@ def find_best_btbsizes_per_interval(
         group_df = pd.DataFrame(group["rows"])
         best_row = group_df.loc[group_df["ppw"].idxmax()]
         output = {
-            "period_start": group["start"],
-            "period_end": group["end"],
+            "interval_start": group["start"],
+            "interval_end": group["end"],
             "btbCore0": best_row["btbCore0"],
             "btbCore1": best_row["btbCore1"],
             "prefetcher": best_row["Prefetch"],
