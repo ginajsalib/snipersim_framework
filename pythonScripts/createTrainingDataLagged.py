@@ -56,14 +56,18 @@ def transform_data_with_lag(input_csv: str, output_csv: str):
     if transformed_rows:
         result_df = pd.DataFrame(transformed_rows)
         result_df.to_csv(output_csv, index=False)
-        print(f"✅ Transformation complete! Created {len(result_df)} rows.")
+        print(f"Transformation complete! Created {len(result_df)} rows.")
         print(f"Saved to: {output_csv}")
     else:
-        print("⚠️ No data transformed — no previous periods found.")
+        print(" No data transformed — no previous periods found.")
 
 # Example usage
 if __name__ == "__main__":
+    import sys
+    if len(sys.argv) >= 2:
+        input_csv = sys.argv[1] 
+        output_csv = sys.argv[2]
     transform_data_with_lag(
-        input_csv="MergedFull.csv",
-        output_csv="Training_Data_Lagged.csv"
+        input_csv,
+        output_csv
     )
