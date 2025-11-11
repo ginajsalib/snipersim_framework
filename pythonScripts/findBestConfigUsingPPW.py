@@ -73,8 +73,12 @@ def find_best_btbsizes_per_interval(
 
 # Example usage
 if __name__ == "__main__":
+    import sys
+    if len(sys.argv) >= 2:
+        input_csv = sys.argv[1] 
+        output_csv = sys.argv[2]
     find_best_btbsizes_per_interval(
-        input_csv="MergedFull.csv",
-        output_csv="BestConfigs.csv",
+        input_csv,
+        output_csv,
         tolerance=100
     )
