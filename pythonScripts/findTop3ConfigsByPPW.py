@@ -93,4 +93,7 @@ def find_top3_configs_by_ppw(input_csv, output_csv="Top3ConfigsPPW.csv"):
 
 # Example usage
 if __name__ == "__main__":
-    find_top3_configs_by_ppw("MergedFull.csv")
+    if len(sys.argv) >= 2:
+        input_csv = sys.argv[1] 
+        output_csv = sys.argv[2]
+    find_top3_configs_by_ppw(input_csv, output_csv)
