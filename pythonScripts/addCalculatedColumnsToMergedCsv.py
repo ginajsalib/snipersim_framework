@@ -46,7 +46,7 @@ def add_calculated_columns(input_file, output_file=None):
                 found = True
                 break
         if not found:
-            print(f"⚠️  Warning: Column '{expected_name}' not found. Looking for alternatives...")
+            print(f" Warning: Column '{expected_name}' not found. Looking for alternatives...")
             # Try partial match
             for col in df.columns:
                 if expected_name.lower().replace('.', '').replace('_', '') in col.lower().replace('.', '').replace('_', ''):
@@ -55,11 +55,11 @@ def add_calculated_columns(input_file, output_file=None):
                     found = True
                     break
             if not found:
-                print(f"❌ Error: Could not find column for '{expected_name}'")
+                print(f"Error: Could not find column for '{expected_name}'")
                 print(f"   Available columns: {list(df.columns)}")
                 return df
     
-    print("\n✅ Column mapping:")
+    print("\n Column mapping:")
     for key, col in col_mapping.items():
         print(f"   {key}: {col}")
     
@@ -101,7 +101,7 @@ def add_calculated_columns(input_file, output_file=None):
     output_file = output_file or input_file
     df.to_csv(output_file, index=False)
     
-    print(f"\n✅ Added columns: time_seconds, ips, ips_cubed, ppw, config")
+    print(f"\n Added columns: time_seconds, ips, ips_cubed, ppw, config")
     print(f"Output saved to: {output_file}")
     print(f"\nSample of new columns:")
     print(df[['time_seconds', 'ips', 'ips_cubed', 'ppw', 'config']].head())
