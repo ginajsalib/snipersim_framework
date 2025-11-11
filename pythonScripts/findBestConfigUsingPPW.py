@@ -16,7 +16,7 @@ def find_best_btbsizes_per_interval(
             raise ValueError(f"Missing required column: {col}")
 
     # Prefetcher column (optional)
-    has_prefetcher = "prefetcher" in df.columns
+    has_prefetcher = "Prefetch" in df.columns
 
     # Parse "periodicins-12345" → 12345
     def parse_ins(val):
@@ -61,7 +61,7 @@ def find_best_btbsizes_per_interval(
             "config": 
                 best_row['btbCore0'].astype(str) + '_' + 
                 best_row['btbCore1'].astype(str) + '_' + 
-                best_row['prefetcher'].astype(str),
+                best_row['Prefetch'].astype(str),
         
             "PPW": best_row["ppw"]
         }
