@@ -95,17 +95,22 @@ def merge_best_config_with_training_data(
     # --- Save result ---
     merged_df.to_csv(output_csv, index=False)
 
-    print("✅ Merge complete!")
-    print(f"• {matched} rows matched with best config")
-    print(f"• {unmatched} rows without best config")
-    print(f"📄 Output saved to: {output_csv}")
+    print(" Merge complete!")
+    print(f" {matched} rows matched with best config")
+    print(f" {unmatched} rows without best config")
+    print(f"Output saved to: {output_csv}")
 
 
 # Example usage
 if __name__ == "__main__":
+    import sys
+    if len(sys.argv) >= 3:
+        training_csv = sys.argv[1] 
+        best_config_csv = sys.argv[2]
+        output_csv = sys.argv[3]
     merge_best_config_with_training_data(
-        training_csv="Training_Data_Lagged.csv",
-        best_config_csv="BestConfigs.csv",
-        output_csv="Training_Data_Complete.csv",
+        training_csv,
+        best_config_csv,
+        output_csv,
         tolerance=100
     )
