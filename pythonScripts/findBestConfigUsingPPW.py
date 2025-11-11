@@ -61,7 +61,7 @@ def find_best_btbsizes_per_interval(
             "config": 
                 best_row['btbCore0'].astype(str) + '_' + 
                 best_row['btbCore1'].astype(str) + '_' + 
-                best_row['Prefetch'].astype(str),
+                best_row['Prefetch'],
         
             "PPW": best_row["ppw"]
         }
