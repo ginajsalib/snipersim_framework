@@ -1,44 +1,62 @@
 import subprocess
-import sys
 import os
+import sys
+import argparse
+from datetime import datetime
 
 def run_script(script_name, *args):
-    """Runs a Python script with given arguments, error if non-0 exit."""
-    cmd = [sys.executable, script_name] + list(args)
-    print(f"Running: {' '.join(cmd)}")
-    result = subprocess.run(cmd, check=False)
+    """Run a Python script with optional arguments and handle errors."""
+    print(f"\n Running {script_name} {' '.join(args)} ...")
+    result = subprocess.run([sys.executable, script_name, *args], capture_output=True, text=True)
     if result.returncode != 0:
-        raise RuntimeError(f"Script {script_name} failed with exit code {result.returncode}")
+        print(f" Error in {script_name}:")
+        print(result.stderr)
+        sys.exit(result.returncode)
+    else:
+        print(f"{script_name} completed successfully.")
 
 def main():
-    # Define file names / paths
-    raw_input = "raw_input.csv"
-    step1_out  = "step1_parsed.csv"
-    step2_out  = "step2_no_empty.csv"
-    step3_out  = "step3_perf_power.csv"
-    step4_out  = "step4_calc_cols.csv"
-    bestcfg_out = "BestConfigs.csv"
-    lagged_out = "Training_Data_Lagged.csv"
-    labels_out = "Training_Data_WithLabels.csv"
-    top3_out   = "Top3ConfigsPPW.csv"
-    train_with_top3_out = "TrainWithTop3.csv"
+    parser = argparse.ArgumentParser(
+        description="Run the full SniperSim data pipeline from perf & power CSVs to training datasets."
+    )
+    parser.add_argument("--perf_csv", required=True, help="Path to the performance input CSV file.")
+    parser.add_argument("--power_csv", required=True, help="Path to the power input CSV file.")
+    parser.add_argument("--benchmark", required=True, help="Name of the benchmark (used for output file naming).")
+    args = parser.parse_args()
 
-    # 1 → 7: produce “best config” path
-    run_script("parseInputConfigsOnPerf.py",        raw_input, step1_out)
-    run_script("deleteEmptyRows.py",                step1_out, step2_out)
-    run_script("mergePerfAndPower.py",               step2_out, step3_out)
-    run_script("addCalculatedColumnsToMergedCsv.py", step3_out, step4_out)
-    run_script("findBestConfigUsingPPW.py",          step4_out, bestcfg_out)
-    run_script("createTrainingDataLagged.py",        step4_out, lagged_out)
-    run_script("createTrainingDataWithLabels.py",    lagged_out, bestcfg_out, labels_out)
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    print("Completed pipeline for Best‐Config output: ", labels_out)
+    # --- File paths ---
+    parsed_perf = os.path.join(base_dir, f"parsed_perf_{args.benchmark}.csv")
+    cleaned_perf = os.path.join(base_dir, f"cleaned_perf_{args.benchmark}.csv")
+    merged_perf_power = os.path.join(base_dir, f"merged_perf_power_{args.benchmark}.csv")
+    merged_full = os.path.join(base_dir, f"merged_full_{args.benchmark}.csv")
+    best_configs = os.path.join(base_dir, f"best_configs_{args.benchmark}.csv")
+    training_data_lagged = os.path.join(base_dir, f"training_data_lagged_{args.benchmark}.csv")
+    training_data_complete = os.path.join(base_dir, f"training_data_complete_{args.benchmark}.csv")
+    top3_configs = os.path.join(base_dir, f"top3_configs_{args.benchmark}.csv")
+    train_with_top3 = os.path.join(base_dir, f"train_with_top3_{args.benchmark}.csv")
 
-    # 8 → 9: produce “top 3 configs” path
-    run_script("findTop3ConfigsByPPW.py",             step4_out, top3_out)
-    run_script("mergeTrainWithTop3.py",               labels_out, top3_out, train_with_top3_out)
+    # --- Stage 1: Preprocessing & Merging ---
+    run_script("parseInputConfigsOnPerf.py", args.perf_csv, parsed_perf)
+    run_script("deleteEmptyRows.py", parsed_perf, cleaned_perf)
+    run_script("mergePerfAndPower.py", cleaned_perf, args.power_csv, merged_perf_power)
+    run_script("addCalculatedColumnsToMergedCsv.py", merged_perf_power, merged_full)
 
-    print("Completed pipeline for Top3 output: ", train_with_top3_out)
+    # --- Stage 2: Best Config & Training Data ---
+    run_script("findBestConfigUsingPPW.py", merged_full, best_configs)
+    run_script("createTrainingDataLagged.py", best_configs, training_data_lagged)
+    run_script("createTrainingDataWithLabels.py", training_data_lagged, training_data_complete)
+
+    # --- Stage 3: Top 3 Configs Path ---
+    run_script("findTop3ConfigsByPPW.py", merged_full, top3_configs)
+    run_script("mergeTrainWithTop3.py", training_data_lagged, top3_configs, train_with_top3)
+
+    print("\n Pipeline finished successfully!")
+    print(" Final outputs:")
+    print(f"   • {training_data_complete}  → Training data with BEST config")
+    print(f"   • {train_with_top3}        → Training data with TOP 3 configs")
 
 if __name__ == "__main__":
     main()
