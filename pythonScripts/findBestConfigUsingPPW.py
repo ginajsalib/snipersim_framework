@@ -66,7 +66,7 @@ def find_best_btbsizes_per_interval(
             "PPW": best_row["ppw"]
         }
         if has_prefetcher:
-            output["prefetcher"] = best_row["prefetcher"]
+            output["prefetcher"] = best_row["Prefetch"]
         output_rows.append(output)
 
     # Create output dataframe
