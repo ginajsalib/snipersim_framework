@@ -73,7 +73,9 @@ ALL_CONFIG_COLUMNS = [
 METADATA_COLUMNS_TO_DROP = ['best-config', 'file', 'file_prev', 'period_start',
                             'period_end', 'period_start_prev', 'period_end_prev',
                             'directory_perf_prev', 'leaf_dir_prev', 'directory_power_prev',
-                            'leaf_dir_perf_prev', 'leaf_dir_power_prev']
+                            'leaf_dir_perf_prev', 'leaf_dir_power_prev', 'period_start_val_prev', 
+                            'period_end_val_perf_prev', 'period_start_val_perf_prev', 'period_start_val_power_prev',
+                            'period_end_val_power_prev]
 
 # Hyperparameter tuning options
 ENABLE_HYPERPARAMETER_TUNING = True
