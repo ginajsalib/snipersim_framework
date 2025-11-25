@@ -90,6 +90,7 @@ METADATA_COLUMNS_TO_DROP = ['best-config', 'file', 'file_prev', 'period_start',
                             'period_end_val_perf_prev', 'period_start_val_perf_prev', 'period_start_val_power_prev',
                             'period_end_val_power_prev']
 
+
 # Hyperparameter tuning options
 ENABLE_HYPERPARAMETER_TUNING = True
 SEARCH_TYPE = 'random'  # 'grid' or 'random'
