@@ -28,10 +28,15 @@ warnings.filterwarnings('ignore')
 # csv_filename2 = list(uploaded2.keys())[0]
 
 # For local testing, specify your CSV file paths
-csv_filename1 = '/content/train_with_top3_barnes_simple.csv'  # Replace with your first file path
-csv_filename2 = '/content/train_with_top3_cholesky.csv'
-csv_filename3 = '/content/train_with_top3_fft.csv'   # Replace with your second file path
-csv_filename4 = '/content/train_with_top3_radiosity.csv'
+csv_filename1 = 'train_with_top3_barnes_merged_prefetcher.csv'  # Replace with your first file path
+csv_filename2 = 'train_with_top3_cholesky_merged_prefetcher.csv'
+csv_filename3 = 'train_with_top3_fft_merged_prefetcher.csv'   # Replace with your second file path
+csv_filename4 = 'train_with_top3_radiosityy_merged_prefetcher.csv'
+#csv_filename5 = 'train_with_top3_barnes.csv'
+#csv_filename6 = 'train_with_top3_fft_prefetcher_none.csv'
+#csv_filename7 = 'choleskyTrainWithTop3PrefetcherNone.csv'
+#csv_filename8 = 'radiosityTrainWithTop3PrefetcherNone.csv'
+
 
 print(" OPTIMIZED Top-3 Random Forest Configuration Predictor")
 print("=" * 60)
@@ -42,10 +47,18 @@ try:
     df2 = pd.read_csv(csv_filename2)
     df3 = pd.read_csv(csv_filename3)
     df4 = pd.read_csv(csv_filename4)
+    #df5 = pd.read_csv(csv_filename5)
+    #df6 = pd.read_csv(csv_filename6)
+    #df7 = pd.read_csv(csv_filename7)
+    #df8 = pd.read_csv(csv_filename8)
     print(f" Data 1 loaded successfully! Shape: {df1.shape}")
     print(f" Data 2 loaded successfully! Shape: {df2.shape}")
     print(f"Data 3 loaded successfully! Shape: {df3.shape}")
     print(f"Data 4 loaded successfully! Shape: {df4.shape}")
+    #print(f" Data 5 loaded successfully! Shape: {df5.shape}")
+    #print(f" Data 6 loaded successfully! Shape: {df6.shape}")
+    #print(f"Data 7 loaded successfully! Shape: {df7.shape}")
+    #print(f"Data 8 loaded successfully! Shape: {df8.shape}")
 
     # Combine the two dataframes
     df = pd.concat([df1, df2, df3, df4], ignore_index=True)
@@ -73,7 +86,9 @@ ALL_CONFIG_COLUMNS = [
 METADATA_COLUMNS_TO_DROP = ['best-config', 'file', 'file_prev', 'period_start',
                             'period_end', 'period_start_prev', 'period_end_prev',
                             'directory_perf_prev', 'leaf_dir_prev', 'directory_power_prev',
-                            'leaf_dir_perf_prev', 'leaf_dir_power_prev']
+                            'leaf_dir_perf_prev', 'leaf_dir_power_prev', 'period_start_val_prev', 
+                            'period_end_val_perf_prev', 'period_start_val_perf_prev', 'period_start_val_power_prev',
+                            'period_end_val_power_prev']
 
 # Hyperparameter tuning options
 ENABLE_HYPERPARAMETER_TUNING = True
