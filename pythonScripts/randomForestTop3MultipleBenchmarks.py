@@ -19,10 +19,10 @@ warnings.filterwarnings('ignore')
 # ==============================================================================
 
 # For local testing, specify your CSV file paths
-csv_filename1 = 'train_with_top3_barnes_merged_prefetcher.csv'
-csv_filename2 = 'train_with_top3_cholesky_merged_prefetcher.csv'
-csv_filename3 = 'train_with_top3_fft_merged_prefetcher.csv'
-csv_filename4 = 'train_with_top3_radiosityy_merged_prefetcher.csv'
+csv_filename1 = 'train_with_top3_barnes_merged_prefetcher_combined.csv'
+csv_filename2 = 'train_with_top3_cholesky_merged_prefetcher_combined.csv'
+csv_filename3 = 'train_with_top3_fft_merged_prefetcher_combined.csv'
+csv_filename4 = 'train_with_top3_radiosityy_merged_prefetcher_combined.csv'
 
 print("OPTIMIZED Top-3 Random Forest Configuration Predictor (with Prefetcher)")
 print("=" * 60)
@@ -183,15 +183,23 @@ for rank, data in test_top3.items():
     # Convert to numeric
     for col in [f'btbCore0_{rank}', f'btbCore1_{rank}']:
         test_top3_cleaned[rank][col] = pd.to_numeric(test_top3_cleaned[rank][col], errors='coerce')
-    # Encode prefetcher
-    test_top3_cleaned[rank][f'prefetcher_{rank}'] = prefetcher_encoder.transform(
-        test_top3_cleaned[rank][f'prefetcher_{rank}'].astype(str)
-    )
+    
+    # Handle prefetcher encoding - fill NaN/None with 'none' before encoding
+    prefetch_col = test_top3_cleaned[rank][f'prefetcher_{rank}']
+    prefetch_col = prefetch_col.fillna('none')  # Fill NaN with 'none'
+    prefetch_col = prefetch_col.astype(str)
+    
+    # Replace string 'nan' with 'none' if it exists
+    prefetch_col = prefetch_col.replace('nan', 'none')
+    
+    # Handle any unseen categories by replacing with the most common one
+    valid_categories = set(prefetcher_encoder.classes_)
+    prefetch_col = prefetch_col.apply(lambda x: x if x in valid_categories else 'none')
+    
+    test_top3_cleaned[rank][f'prefetcher_{rank}'] = prefetcher_encoder.transform(prefetch_col)
+    
     # Convert PPW to numeric
     test_top3_cleaned[rank][f'PPW_{rank}'] = pd.to_numeric(test_top3_cleaned[rank][f'PPW_{rank}'], errors='coerce')
-
-test_top3 = test_top3_cleaned
-y_test = y_test.reset_index(drop=True)
 
 print(f"After cleaning - y_train shape: {y_train.shape}, y_test shape: {y_test.shape}")
 print(f"After cleaning - test_top3['best'] shape: {test_top3['best'].shape}")
