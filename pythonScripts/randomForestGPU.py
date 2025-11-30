@@ -15,6 +15,7 @@ import warnings
 import joblib
 from datetime import datetime
 import os
+import argparse
 warnings.filterwarnings('ignore')
 
 # Check for GPU availability (cuML for GPU-accelerated RF)
@@ -29,6 +30,25 @@ except ImportError:
     print("To enable GPU: pip install cuml-cu11 cupy-cuda11x")
 
 # ==============================================================================
+# Command Line Arguments
+# ==============================================================================
+parser = argparse.ArgumentParser(description='Random Forest Configuration Predictor')
+parser.add_argument('--split-method', type=str, default='random', 
+                    choices=['random', 'benchmark', 'temporal'],
+                    help='Method to split train/test data: random, benchmark, or temporal')
+parser.add_argument('--test-size', type=float, default=0.2,
+                    help='Proportion of data to use for testing (default: 0.2)')
+parser.add_argument('--tune', action='store_true', default=True,
+                    help='Enable hyperparameter tuning')
+parser.add_argument('--no-tune', dest='tune', action='store_false',
+                    help='Disable hyperparameter tuning')
+args = parser.parse_args()
+
+SPLIT_METHOD = args.split_method
+TEST_SIZE = args.test_size
+ENABLE_HYPERPARAMETER_TUNING = args.tune
+
+# ==============================================================================
 # Data Loading, Merging & Initial Cleaning
 # ==============================================================================
 
@@ -39,6 +59,10 @@ csv_filename3 = 'train_with_top3_fft_merged_prefetcher_combined.csv'
 csv_filename4 = 'train_with_top3_radiosityy_merged_prefetcher_combined.csv'
 
 print("OPTIMIZED Top-3 Random Forest Configuration Predictor (with Prefetcher)")
+print("=" * 60)
+print(f"Split Method: {SPLIT_METHOD}")
+print(f"Test Size: {TEST_SIZE}")
+print(f"Hyperparameter Tuning: {'Enabled' if ENABLE_HYPERPARAMETER_TUNING else 'Disabled'}")
 print("=" * 60)
 
 # Load the datasets
@@ -83,7 +107,6 @@ METADATA_COLUMNS_TO_DROP = ['best-config', 'file', 'file_prev', 'period_start',
                             'period_end_val_power_prev']
 
 # Hyperparameter tuning options
-ENABLE_HYPERPARAMETER_TUNING = True
 SEARCH_TYPE = 'random'  # 'grid' or 'random'
 N_ITER_RANDOM_SEARCH = 50  # Number of iterations for random search
 CV_FOLDS = 3
@@ -125,6 +148,28 @@ print(f"Target 2 (btbCore1) unique values: {len(y.iloc[:, 1].unique())}")
 print(f"Target 3 (prefetcher) unique values: {len(y.iloc[:, 2].unique())}")
 print(f"Prefetcher values: {y.iloc[:, 2].unique()}")
 
+# Analyze target distribution
+print(f"\nTarget Distribution Analysis:")
+print("-" * 40)
+print(f"Unique configurations:")
+print(f"  btbCore0: {y['btbCore0_best'].nunique()} unique values")
+print(f"  btbCore1: {y['btbCore1_best'].nunique()} unique values") 
+print(f"  prefetcher: {y['prefetcher_best'].nunique()} unique values")
+print(f"  Total possible combinations: {y['btbCore0_best'].nunique() * y['btbCore1_best'].nunique() * y['prefetcher_best'].nunique()}")
+
+# Check stability - how often best config matches previous config
+if 'btbCore0_prev' in X.columns and 'btbCore1_prev' in X.columns:
+    same_btb0 = (X['btbCore0_prev'] == y['btbCore0_best']).sum()
+    same_btb1 = (X['btbCore1_prev'] == y['btbCore1_best']).sum()
+    print(f"\nConfiguration Stability:")
+    print(f"  btbCore0 stays same: {same_btb0}/{len(y)} ({same_btb0/len(y)*100:.1f}%)")
+    print(f"  btbCore1 stays same: {same_btb1}/{len(y)} ({same_btb1/len(y)*100:.1f}%)")
+    if 'Prefetch_prev' in X.columns or 'prefetcher_prev' in X.columns:
+        prefetch_col = 'Prefetch_prev' if 'Prefetch_prev' in X.columns else 'prefetcher_prev'
+        # Note: This comparison may not work directly since prefetcher_best is encoded
+        print(f"  (prefetcher stability check requires decoding)")
+
+
 # 2. FEATURE PREPROCESSING
 print(f"\nFEATURE PREPROCESSING")
 print("-" * 40)
@@ -150,29 +195,104 @@ X = X[numeric_cols]
 
 print(f"Final feature set: {X.shape}")
 
+print(f"\nFirst 20 feature columns:")
+for i, col in enumerate(X.columns):
+    if i < 20:
+        print(f"  {i+1}. {col}")
+if len(X.columns) > 20:
+    print(f"  ... and {len(X.columns) - 20} more")
+
 # 3. TRAIN-TEST SPLIT
-# Use stratified split to ensure balanced test set
-from sklearn.model_selection import StratifiedShuffleSplit
+print(f"\nTRAIN-TEST SPLIT")
+print("-" * 40)
+print(f"Split method: {SPLIT_METHOD}")
 
-# Create stratification key
-stratify_key = (y[TARGET_COLUMNS[0]].astype(str) + '_' + 
-                y[TARGET_COLUMNS[1]].astype(str) + '_' + 
-                y[TARGET_COLUMNS[2]].astype(str))
+if SPLIT_METHOD == 'benchmark':
+    # Split by benchmark - test on unseen benchmarks
+    if 'benchmark' not in X.columns:
+        print("ERROR: 'benchmark' column not found in features!")
+        print("Available columns:", X.columns.tolist())
+        print("Falling back to random split...")
+        SPLIT_METHOD = 'random'
+    else:
+        benchmarks = X['benchmark'].unique()
+        print(f"Found {len(benchmarks)} unique benchmarks: {benchmarks}")
+        
+        # Use specified test size to determine number of test benchmarks
+        n_test_benchmarks = max(1, int(len(benchmarks) * TEST_SIZE))
+        np.random.seed(RANDOM_STATE)
+        test_benchmarks = np.random.choice(benchmarks, n_test_benchmarks, replace=False)
+        
+        print(f"Test benchmarks ({n_test_benchmarks}): {test_benchmarks}")
+        print(f"Train benchmarks ({len(benchmarks) - n_test_benchmarks}): {[b for b in benchmarks if b not in test_benchmarks]}")
+        
+        # Split by benchmark
+        test_mask = X['benchmark'].isin(test_benchmarks)
+        X_train = X[~test_mask].copy()
+        X_test = X[test_mask].copy()
+        y_train = y[~test_mask].copy()
+        y_test = y[test_mask].copy()
+        
+        print(f"Train set size: {len(X_train)}, Test set size: {len(X_test)}")
+        print(f"This tests generalization to UNSEEN benchmarks")
 
-sss = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=RANDOM_STATE)
-for train_idx, test_idx in sss.split(X, stratify_key):
-    X_train = X.iloc[train_idx]
-    X_test = X.iloc[test_idx]
-    y_train = y.iloc[train_idx]
-    y_test = y.iloc[test_idx]
+elif SPLIT_METHOD == 'temporal':
+    # Temporal split - train on early data, test on later data
+    print("Using temporal split (chronological order)")
+    print("Assuming data is already sorted by time/period")
+    
+    split_point = int(len(X) * (1 - TEST_SIZE))
+    X_train = X.iloc[:split_point].copy()
+    X_test = X.iloc[split_point:].copy()
+    y_train = y.iloc[:split_point].copy()
+    y_test = y.iloc[split_point:].copy()
+    
+    print(f"Train set: first {len(X_train)} samples ({(1-TEST_SIZE)*100:.0f}%)")
+    print(f"Test set: last {len(X_test)} samples ({TEST_SIZE*100:.0f}%)")
+    print(f"This tests generalization to FUTURE time periods")
 
-print(f"\nTrain set size: {len(X_train)}, Test set size: {len(X_test)}")
+else:  # random
+    # Random split with stratification
+    print("Using random stratified split")
+    
+    # Create stratification key (all 3 targets)
+    stratify_key = (y[TARGET_COLUMNS[0]].astype(str) + '_' + 
+                    y[TARGET_COLUMNS[1]].astype(str) + '_' + 
+                    y[TARGET_COLUMNS[2]].astype(str))
+    
+    try:
+        sss = StratifiedShuffleSplit(n_splits=1, test_size=TEST_SIZE, random_state=RANDOM_STATE)
+        for train_idx, test_idx in sss.split(X, stratify_key):
+            X_train = X.iloc[train_idx].copy()
+            X_test = X.iloc[test_idx].copy()
+            y_train = y.iloc[train_idx].copy()
+            y_test = y.iloc[test_idx].copy()
+        print("Using stratified split to balance target distribution")
+    except:
+        # Fallback if stratification fails
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE
+        )
+        print("Stratification failed, using simple random split")
+    
+    print(f"Train set size: {len(X_train)}, Test set size: {len(X_test)}")
+
+# Check for data overlap (potential leakage indicator)
+print(f"\nChecking for potential data leakage...")
+if 'config' in X_train.columns:
+    train_configs = set(X_train['config'].astype(str))
+    test_configs = set(X_test['config'].astype(str))
+    config_overlap = len(train_configs & test_configs)
+    print(f"Config values appearing in both train/test: {config_overlap}/{len(test_configs)} ({config_overlap/len(test_configs)*100:.1f}%)")
+    if config_overlap / len(test_configs) > 0.9:
+        print("  WARNING: High overlap detected - model may appear to overfit")
+
 
 # Get corresponding top-3 data for test set
 test_indices = X_test.index
 test_top3 = {}
 for rank, data in top3_configs.items():
-    test_top3[rank] = data.loc[test_indices]
+    test_top3[rank] = data.loc[test_indices].copy()
 
 # Scale features
 scaler = StandardScaler()
@@ -225,9 +345,6 @@ for rank, data in test_top3.items():
     
     # Convert PPW to numeric
     test_top3_cleaned[rank][f'PPW_{rank}'] = pd.to_numeric(test_top3_cleaned[rank][f'PPW_{rank}'], errors='coerce')
-
- 
-
 test_top3 = test_top3_cleaned
 y_test = y_test.reset_index(drop=True)
 
@@ -598,6 +715,8 @@ with open(metadata_path, 'w') as f:
     f.write(f"Random Forest Configuration Predictor\n")
     f.write(f"=" * 60 + "\n")
     f.write(f"Timestamp: {timestamp}\n")
+    f.write(f"Split Method: {SPLIT_METHOD}\n")
+    f.write(f"Test Size: {TEST_SIZE}\n")
     f.write(f"Training samples: {len(X_train_scaled)}\n")
     f.write(f"Test samples: {num_samples}\n")
     f.write(f"\nModel Parameters:\n")
