@@ -174,6 +174,13 @@ if 'btbCore0_prev' in X.columns and 'btbCore1_prev' in X.columns:
 print(f"\nFEATURE PREPROCESSING")
 print("-" * 40)
 
+# Store original benchmark column before encoding (needed for benchmark split)
+benchmark_original = None
+if 'benchmark' in X.columns:
+    benchmark_original = X['benchmark'].copy()
+    print(f"Saved original benchmark column for splitting")
+    print(f"Unique benchmarks: {benchmark_original.unique()}")
+
 # Handle categorical features
 categorical_cols = X.select_dtypes(include=['object']).columns
 label_encoders = {}
@@ -209,32 +216,48 @@ print(f"Split method: {SPLIT_METHOD}")
 
 if SPLIT_METHOD == 'benchmark':
     # Split by benchmark - test on unseen benchmarks
-    if 'benchmark' not in X.columns:
+    if benchmark_original is None:
         print("ERROR: 'benchmark' column not found in features!")
         print("Available columns:", X.columns.tolist())
         print("Falling back to random split...")
         SPLIT_METHOD = 'random'
     else:
-        benchmarks = X['benchmark'].unique()
+        benchmarks = benchmark_original.unique()
         print(f"Found {len(benchmarks)} unique benchmarks: {benchmarks}")
         
-        # Use specified test size to determine number of test benchmarks
-        n_test_benchmarks = max(1, int(len(benchmarks) * TEST_SIZE))
-        np.random.seed(RANDOM_STATE)
-        test_benchmarks = np.random.choice(benchmarks, n_test_benchmarks, replace=False)
-        
-        print(f"Test benchmarks ({n_test_benchmarks}): {test_benchmarks}")
-        print(f"Train benchmarks ({len(benchmarks) - n_test_benchmarks}): {[b for b in benchmarks if b not in test_benchmarks]}")
-        
-        # Split by benchmark
-        test_mask = X['benchmark'].isin(test_benchmarks)
-        X_train = X[~test_mask].copy()
-        X_test = X[test_mask].copy()
-        y_train = y[~test_mask].copy()
-        y_test = y[test_mask].copy()
-        
-        print(f"Train set size: {len(X_train)}, Test set size: {len(X_test)}")
-        print(f"This tests generalization to UNSEEN benchmarks")
+        if len(benchmarks) < 2:
+            print(f"WARNING: Only {len(benchmarks)} benchmark(s) found. Need at least 2 for benchmark split.")
+            print("Falling back to random split...")
+            SPLIT_METHOD = 'random'
+        else:
+            # Use specified test size to determine number of test benchmarks
+            n_test_benchmarks = max(1, int(len(benchmarks) * TEST_SIZE))
+            np.random.seed(RANDOM_STATE)
+            test_benchmarks = np.random.choice(benchmarks, n_test_benchmarks, replace=False)
+            
+            print(f"Test benchmarks ({n_test_benchmarks}): {test_benchmarks}")
+            print(f"Train benchmarks ({len(benchmarks) - n_test_benchmarks}): {[b for b in benchmarks if b not in test_benchmarks]}")
+            
+            # Split by benchmark using original values
+            test_mask = benchmark_original.isin(test_benchmarks)
+            X_train = X[~test_mask].copy()
+            X_test = X[test_mask].copy()
+            y_train = y[~test_mask].copy()
+            y_test = y[test_mask].copy()
+            
+            # Also store which benchmarks are in test set for later reference
+            benchmark_train = benchmark_original[~test_mask]
+            benchmark_test = benchmark_original[test_mask]
+            
+            print(f"Train set size: {len(X_train)} ({len(X_train)/len(X)*100:.1f}%)")
+            print(f"Test set size: {len(X_test)} ({len(X_test)/len(X)*100:.1f}%)")
+            print(f"Train benchmarks distribution:")
+            for bench, count in benchmark_train.value_counts().items():
+                print(f"  {bench}: {count} samples")
+            print(f"Test benchmarks distribution:")
+            for bench, count in benchmark_test.value_counts().items():
+                print(f"  {bench}: {count} samples")
+            print(f"This tests generalization to UNSEEN benchmarks")
 
 elif SPLIT_METHOD == 'temporal':
     # Temporal split - train on early data, test on later data
@@ -345,6 +368,7 @@ for rank, data in test_top3.items():
     
     # Convert PPW to numeric
     test_top3_cleaned[rank][f'PPW_{rank}'] = pd.to_numeric(test_top3_cleaned[rank][f'PPW_{rank}'], errors='coerce')
+
 test_top3 = test_top3_cleaned
 y_test = y_test.reset_index(drop=True)
 
@@ -562,8 +586,9 @@ for i in range(num_samples):
 
     if exact_match:
         exact_matches += 1
-        ppw_costs['exact'].append(actual_configs[0]['ppw'])
-        ppw_diffs.append(0)  # No difference for exact match
+        if not np.isnan(actual_configs[0]['ppw']):
+            ppw_costs['exact'].append(actual_configs[0]['ppw'])
+            ppw_diffs.append(0.0)  # No difference for exact match
 
     if top3_match:
         top3_matches += 1
@@ -571,14 +596,18 @@ for i in range(num_samples):
                           if (pred_core0 == cfg['config'][0]) and 
                              (pred_core1 == cfg['config'][1]) and
                              (pred_prefetch == cfg['config'][2]))
-        ppw_costs['top3_hit'].append(matched_ppw)
-        # Calculate PPW difference (best - predicted)
-        ppw_diff = actual_configs[0]['ppw'] - matched_ppw
-        ppw_diffs.append(ppw_diff)
+        
+        if not np.isnan(matched_ppw) and not np.isnan(actual_configs[0]['ppw']):
+            ppw_costs['top3_hit'].append(matched_ppw)
+            # Calculate PPW difference (best - predicted)
+            ppw_diff = actual_configs[0]['ppw'] - matched_ppw
+            ppw_diffs.append(ppw_diff)
+        else:
+            ppw_diffs.append(None)
     else:
-        ppw_costs['top3_miss'].append(actual_configs[0]['ppw'])
+        if not np.isnan(actual_configs[0]['ppw']):
+            ppw_costs['top3_miss'].append(actual_configs[0]['ppw'])
         # For misses, we don't know the predicted config's PPW
-        # Just record that it missed
         ppw_diffs.append(None)
 
     # Store detailed result
@@ -622,7 +651,15 @@ print(f"  Improvement:                +{(top3_accuracy - exact_accuracy):.4f} ({
 # PPW Difference Analysis
 print(f"\nPPW DIFFERENCE ANALYSIS:")
 print("-" * 40)
-valid_ppw_diffs = [d for d in ppw_diffs if d is not None]
+
+# Debug: Check ppw_diffs content
+print(f"Debug: Total ppw_diffs entries: {len(ppw_diffs)}")
+print(f"Debug: Non-None entries: {sum(1 for d in ppw_diffs if d is not None)}")
+print(f"Debug: Sample ppw_diffs values: {ppw_diffs[:10]}")
+
+valid_ppw_diffs = [d for d in ppw_diffs if d is not None and not np.isnan(d)]
+print(f"Debug: Valid ppw_diffs after filtering: {len(valid_ppw_diffs)}")
+
 if valid_ppw_diffs:
     avg_ppw_diff = np.mean(valid_ppw_diffs)
     median_ppw_diff = np.median(valid_ppw_diffs)
@@ -650,13 +687,29 @@ if valid_ppw_diffs:
             print(f"  PPW loss percentage:     {ppw_loss_pct:.2f}%")
 else:
     print("No valid PPW difference data available")
+    print("Debug: Checking why...")
+    print(f"  exact_matches: {exact_matches}")
+    print(f"  top3_matches: {top3_matches}")
+    print(f"  ppw_costs['exact'] samples: {len(ppw_costs['exact'])}")
+    print(f"  ppw_costs['top3_hit'] samples: {len(ppw_costs['top3_hit'])}")
 
 # 7. FEATURE IMPORTANCE ANALYSIS
 print(f"\nFEATURE IMPORTANCE ANALYSIS")
 print("-" * 40)
 
+# Get feature names from the training data (after all preprocessing)
+feature_names = X_train.columns.tolist()
+
+# Verify dimensions match
+if len(feature_names) != len(best_model.feature_importances_):
+    print(f"WARNING: Feature count mismatch!")
+    print(f"  Feature names: {len(feature_names)}")
+    print(f"  Feature importances: {len(best_model.feature_importances_)}")
+    print(f"  Using indices instead of names")
+    feature_names = [f"feature_{i}" for i in range(len(best_model.feature_importances_))]
+
 feature_importance_df = pd.DataFrame({
-    'feature': X.columns,
+    'feature': feature_names,
     'importance': best_model.feature_importances_
 }).sort_values('importance', ascending=False)
 
