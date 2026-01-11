@@ -53,8 +53,10 @@ def find_top3_configs_by_ppw(input_csv, output_csv="Top3ConfigsPPW.csv"):
         if group.empty:
             continue
 
-        # Sort by PPW ascending
-        group_sorted = group.sort_values(by="ppw", ascending=True).reset_index(drop=True)
+
+
+        # Sort by PPW descending
+        group_sorted = group.sort_values(by="ppw", ascending=False).reset_index(drop=True)
 
         # Get top 3 configs (fill with best if fewer)
         best = group_sorted.iloc[0]
