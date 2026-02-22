@@ -32,7 +32,7 @@ def merge_benchmark_csvs(file1_path, file2_path, output_path='merged_top3_config
     ppw = get_column_value(all_configs, ['ppw'])
     
     all_configs['btbCore0'] = btb_core0
-    all_configs['btbCore1'] = btb_cores
+    all_configs['btbCore1'] = btb_core1
     all_configs['prefetcher'] = prefetcher.fillna('none')
     all_configs['benchmark'] = benchmark
     all_configs['ppw'] = pd.to_numeric(ppw, errors='coerce')
