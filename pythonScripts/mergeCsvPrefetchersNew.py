@@ -29,10 +29,10 @@ def merge_benchmark_csvs(file1_path, file2_path, output_path='merged_top3_config
     btb_core1 = get_column_value(all_configs, ['BTB core 1_prev', 'btbCore1_prev', 'btbCore1'])
     prefetcher = get_column_value(all_configs, ['Prefetch_prev', 'prefetcher', 'Prefetcher'])
     benchmark = get_column_value(all_configs, ['leaf_dir_prev', 'directory_perf_prev', 'benchmark'])
-    ppw = get_column_value(all_configs, ['ppw_prev', 'PPW_best', 'PPW'])
+    ppw = get_column_value(all_configs, ['ppw'])
     
     all_configs['btbCore0'] = btb_core0
-    all_configs['btbCore1'] = btb_core1
+    all_configs['btbCore1'] = btb_cores
     all_configs['prefetcher'] = prefetcher.fillna('none')
     all_configs['benchmark'] = benchmark
     all_configs['ppw'] = pd.to_numeric(ppw, errors='coerce')
