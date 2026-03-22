@@ -9,11 +9,15 @@ def find_best_btbsizes_per_interval(
     tolerance: int = 100
 ):
     """
-    For each time interval (grouped within tolerance), find the best PPW row
-    for every unique (btbCore0, btbCore1, Prefetch, L2, L3) combination.
-    Outputs one row per (interval, config_combo).
+    For each time interval, find the single globally best (btbCore0, btbCore1,
+    Prefetch, L2, L3) combination by highest PPW across ALL rows in that interval.
+    Outputs one row per interval.
+
+    input_csv may be a single path or a comma-separated list of paths
+    (one per prefetcher/cache setting) — concatenated automatically.
     """
-    # --- Load CSV (accepts a single path or a comma-separated list of paths) ---
+
+    # --- Load one or multiple CSVs ---
     if ',' in input_csv:
         paths = [p.strip() for p in input_csv.split(',')]
         df = pd.concat([pd.read_csv(p) for p in paths], ignore_index=True)
@@ -41,28 +45,30 @@ def find_best_btbsizes_per_interval(
     df = df.dropna(subset=["start_num", "end_num", "ppw"])
     df = df.sort_values(by=["start_num", "end_num"]).reset_index(drop=True)
 
-    # --- Group rows by interval (within tolerance) ---
-    interval_labels    = {}
+    # --- Group rows into intervals (within tolerance) ---
+    # Assign a canonical (start, end) label to each row
     canonical_intervals = []
+    interval_label_start = []
+    interval_label_end   = []
 
-    for idx, row in df.iterrows():
+    for _, row in df.iterrows():
         start, end = row["start_num"], row["end_num"]
-        matched_interval = None
+        matched = None
         for cs, ce in canonical_intervals:
             if abs(cs - start) <= tolerance and abs(ce - end) <= tolerance:
-                matched_interval = (cs, ce)
+                matched = (cs, ce)
                 break
-        if matched_interval is None:
-            matched_interval = (start, end)
-            canonical_intervals.append(matched_interval)
-        interval_labels[idx] = matched_interval
+        if matched is None:
+            matched = (start, end)
+            canonical_intervals.append(matched)
+        interval_label_start.append(matched[0])
+        interval_label_end.append(matched[1])
 
-    df["interval_start"] = [interval_labels[i][0] for i in df.index]
-    df["interval_end"]   = [interval_labels[i][1] for i in df.index]
+    df["interval_start"] = interval_label_start
+    df["interval_end"]   = interval_label_end
 
-    # --- For each (interval, btbCore0, btbCore1, Prefetch, L2, L3) pick max PPW row ---
-    combo_cols = ["interval_start", "interval_end", "btbCore0", "btbCore1", "Prefetch", "L2", "L3"]
-    best_idx = df.groupby(combo_cols)["ppw"].idxmax()
+    # --- For each interval pick the single row with globally highest PPW ---
+    best_idx = df.groupby(["interval_start", "interval_end"])["ppw"].idxmax()
     best_df  = df.loc[best_idx].reset_index(drop=True)
 
     # --- Build output ---
@@ -83,7 +89,7 @@ def find_best_btbsizes_per_interval(
         "l2_size":        best_df["L2"],
         "l3_size":        best_df["L3"],
         "config":         config_str,
-        "best-config":    config_str,   # alias used by createTrainingDataWithLabels.py
+        "best-config":    config_str,
         "PPW":            best_df["ppw"],
     })
 
@@ -91,14 +97,15 @@ def find_best_btbsizes_per_interval(
     result_df.to_csv(output_csv, index=False)
 
     print(f" Best configurations saved to: {output_csv}")
-    print(f" Intervals processed : {result_df[['interval_start','interval_end']].drop_duplicates().shape[0]}")
-    print(f" Config combinations : {result_df.shape[0]} rows total")
+    print(f" Intervals processed: {len(result_df)}")
+    print(f" Unique winning configs: {result_df['config'].nunique()}")
+    print(f" Unique L2 sizes seen:  {result_df['l2_size'].nunique()} → {sorted(result_df['l2_size'].unique())}")
+    print(f" Unique L3 sizes seen:  {result_df['l3_size'].nunique()} → {sorted(result_df['l3_size'].unique())}")
+    print(f" Unique prefetchers:    {result_df['prefetcher'].nunique()} → {sorted(result_df['prefetcher'].unique())}")
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
         print("Usage: python findBestConfigUsingPPW.py <input_csv_or_comma_list> <output_csv>")
         sys.exit(1)
-    input_csv  = sys.argv[1]
-    output_csv = sys.argv[2]
-    find_best_btbsizes_per_interval(input_csv, output_csv, tolerance=100)
+    find_best_btbsizes_per_interval(sys.argv[1], sys.argv[2], tolerance=100)
