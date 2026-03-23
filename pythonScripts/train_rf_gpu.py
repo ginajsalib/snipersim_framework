@@ -30,16 +30,31 @@ def split_prefetcher(series):
     return core0, core1
 
 
-def safe_encode(encoder, series):
-    """Encode a Series with a fitted LabelEncoder; unseen/NaN → 'none'."""
-    valid  = set(encoder.classes_)
-    mapped = series.fillna('none').astype(str).apply(lambda x: x if x in valid else 'none')
+def safe_encode(encoder, series, fallback=None):
+    """Encode a Series with a fitted LabelEncoder.
+    Unknown/NaN values are replaced with `fallback`.
+    If fallback is None, uses the first class in the encoder (index 0).
+    """
+    valid    = set(encoder.classes_)
+    fb       = fallback if fallback is not None and fallback in valid else encoder.classes_[0]
+    mapped   = series.fillna(fb).astype(str).apply(lambda x: x if x in valid else fb)
     return encoder.transform(mapped)
 
 
 def norm_size(series):
-    """Normalize numeric size values to int-string to avoid '256' vs '256.0' mismatch."""
-    return series.apply(lambda x: str(int(float(x))) if str(x) not in ('nan', '', 'None') else 'nan')
+    """Normalize numeric size values to int-string to avoid '256' vs '256.0' mismatch.
+    Invalid/missing values are returned as an empty string so safe_encode
+    can replace them with the encoder's fallback class.
+    """
+    def _convert(x):
+        s = str(x).strip()
+        if s in ('nan', '', 'None', 'none'):
+            return ''
+        try:
+            return str(int(float(s)))
+        except (ValueError, TypeError):
+            return ''
+    return series.apply(_convert)
 
 
 def normalize_config(btb0, btb1, pf0, pf1, l2, l3):
