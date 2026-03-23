@@ -39,8 +39,19 @@ warnings.filterwarnings('ignore')
 parser = argparse.ArgumentParser(description='Post-hoc RF model analysis')
 parser.add_argument('--model-dir', type=str, default='saved_models/')
 parser.add_argument('--model-timestamp', type=str, default=None,
-                    help='Specific timestamp. Omit to use most recent model.')
-parser.add_argument('--output-dir', type=str, default='analysis_reports/')
+
+
+
+
+
+
+                    help='Specific timestamp to load (e.g. 20240101_120000). '
+                         'If omitted, loads the most recent model.')
+parser.add_argument('--output-dir', type=str, default='analysis_reports/',
+                    help='Directory to save the text report')
+parser.add_argument('--cost-csv', type=str, default=None,
+                    help='Optional CSV from costAnalysis.py with inference/reconfig costs')
+
 args = parser.parse_args()
 
 os.makedirs(args.output_dir, exist_ok=True)
@@ -593,10 +604,130 @@ else:
             f'{pct_str(prev_top3, n_p)}')
         out(f'      {"Avg PPW % loss":32} {m_loss:>9.2f}%   {nc_loss:>9.2f}%')
         winner = 'MODEL' if m_loss < nc_loss else 'NO-CHANGE'
+
+
         out(f'      -> {winner} has lower average PPW loss '
             f'(delta = {abs(m_loss - nc_loss):.2f}%)')
 
 
+
+
+
+# ==============================================================================
+# 5. INFERENCE & RECONFIGURATION COST ANALYSIS
+# ==============================================================================
+section('ANALYSIS 5 - INFERENCE & RECONFIGURATION OVERHEAD')
+
+# GAINESTOWN/McPAT PARAMETERS (from power.xml, 45nm HP)
+TECH_PARAMS = {
+    'tech_node_nm': 45,
+    'clock_rate_mhz': 2660,
+    'vdd': 1.2,
+    'device_type': 'HP',
+    'btb_entries_default': 18944,
+    'l2_capacity_kb': 256,
+    'l3_capacity_kb': 8192,
+    'E_gate_per_btb_entry_pJ': 0.05,
+    'E_gate_per_l2_kb_pJ': 2.5,
+    'E_gate_per_l3_kb_pJ': 1.8,
+    'E_gate_per_prefetcher_pJ': 15.0,
+    'E_rf_inst_pJ': 0.5,
+    'E_rf_cmp_pJ': 0.1,
+    'E_rf_mem_pJ': 1.0,
+}
+
+out('  McPAT/GAINESTOWN PARAMETERS USED:')
+out('  ' + '-' * 50)
+out(f"  Technology Node:      {TECH_PARAMS['tech_node_nm']} nm")
+out(f"  Core Clock:           {TECH_PARAMS['clock_rate_mhz']} MHz")
+out(f"  Supply Voltage (Vdd): {TECH_PARAMS['vdd']} V")
+out(f"  Device Type:          {TECH_PARAMS['device_type']} (High Performance)")
+out()
+out('  Component Parameters:')
+out(f"    BTB entries (default):  {TECH_PARAMS['btb_entries_default']}")
+out(f"    L2 capacity:            {TECH_PARAMS['l2_capacity_kb']} KB")
+out(f"    L3 capacity:            {TECH_PARAMS['l3_capacity_kb']} KB")
+out()
+out('  Energy Parameters (45nm HP, 1.2V):')
+out(f"    E_gate_per_btb_entry:   {TECH_PARAMS['E_gate_per_btb_entry_pJ']:.3f} pJ")
+out(f"    E_gate_per_l2_kb:       {TECH_PARAMS['E_gate_per_l2_kb_pJ']:.3f} pJ")
+out(f"    E_gate_per_l3_kb:       {TECH_PARAMS['E_gate_per_l3_kb_pJ']:.3f} pJ")
+out(f"    E_gate_per_prefetcher:  {TECH_PARAMS['E_gate_per_prefetcher_pJ']:.3f} pJ")
+
+# Load cost analysis CSV if provided
+if args.cost_csv and os.path.exists(args.cost_csv):
+    out()
+    out(f"  Cost analysis loaded from: {args.cost_csv}")
+    cost_df = pd.read_csv(args.cost_csv)
+
+    if 'inference_energy_pJ' in cost_df.columns:
+        inf_e = cost_df['inference_energy_pJ'].iloc[0]
+        out()
+        out('  INFERENCE COST (per 500K inst interval):')
+        out('  ' + '-' * 50)
+        out(f"    Total inference:  {inf_e:.2f} pJ ({inf_e/1e6:.4f} uJ)")
+
+    if 'reconfig_energy_pJ' in cost_df.columns:
+        n_changes = (cost_df['config_changed'] == True).sum() if 'config_changed' in cost_df.columns else 0
+        total_reconfig = cost_df['reconfig_energy_pJ'].sum()
+        avg_reconfig = cost_df[cost_df['reconfig_energy_pJ'] > 0]['reconfig_energy_pJ'].mean() if n_changes > 0 else 0
+
+        out()
+        out('  RECONFIGURATION COST (only on config change):')
+        out('  ' + '-' * 50)
+
+        # Component breakdown
+        out('  Component     | Energy/change | % intervals changed')
+        out('  ' + '-' * 55)
+
+        if 'btb_changed' in cost_df.columns:
+            btb_changes = cost_df['btb_changed'].sum()
+            btb_pct = btb_changes / (len(cost_df) - 1) * 100 if len(cost_df) > 1 else 0
+            out(f"    BTB (c0+c1)   | N/A           | {btb_pct:.1f}%")
+
+        if 'l2_changed' in cost_df.columns:
+            l2_changes = cost_df['l2_changed'].sum()
+            l2_pct = l2_changes / (len(cost_df) - 1) * 100 if len(cost_df) > 1 else 0
+            out(f"    L2 cache      | {TECH_PARAMS['E_gate_per_l2_kb_pJ']:.1f} pJ/KB  | {l2_pct:.1f}%")
+
+        if 'l3_changed' in cost_df.columns:
+            l3_changes = cost_df['l3_changed'].sum()
+            l3_pct = l3_changes / (len(cost_df) - 1) * 100 if len(cost_df) > 1 else 0
+            out(f"    L3 cache      | {TECH_PARAMS['E_gate_per_l3_kb_pJ']:.1f} pJ/KB  | {l3_pct:.1f}%")
+
+        if 'prefetcher_changed' in cost_df.columns:
+            pf_changes = cost_df['prefetcher_changed'].sum()
+            pf_pct = pf_changes / (len(cost_df) - 1) * 100 if len(cost_df) > 1 else 0
+            out(f"    Prefetcher    | {TECH_PARAMS['E_gate_per_prefetcher_pJ']:.1f} pJ      | {pf_pct:.1f}%")
+
+        out()
+        out(f"    Total reconfig:      {total_reconfig:.2f} pJ")
+        out(f"    Avg per change:      {avg_reconfig:.2f} pJ" if n_changes > 0 else "    Avg per change:      N/A (no changes)")
+        out(f"    Avg per interval:    {total_reconfig/(len(cost_df)-1):.2f} pJ" if len(cost_df) > 1 else "    N/A")
+
+    # Net PPW impact
+    if 'net_ppw' in cost_df.columns and 'PPW_best' in cost_df.columns:
+        raw_ppw = cost_df['PPW_best'].dropna().mean()
+        net_ppw = cost_df['net_ppw'].dropna().mean()
+
+        out()
+        out('  NET PPW IMPACT:')
+        out('  ' + '-' * 50)
+        out(f"    Raw PPW (best config):     {raw_ppw:.4e}")
+        out(f"    Net PPW (with overhead):   {net_ppw:.4e}")
+        if raw_ppw > 0:
+            overhead_pct = (raw_ppw - net_ppw) / raw_ppw * 100
+            out(f"    PPW overhead:              {overhead_pct:.2f}%")
+else:
+    out()
+    out('  [SKIP] No cost analysis CSV provided.')
+    out('  Run costAnalysis.py first: python costAnalysis.py --benchmark <name> --model-dir saved_models/')
+
+
+# ==============================================================================
+# SAVE REPORT
+# ==============================================================================
+>>>>>>> refs/remotes/origin/main
 # ══════════════════════════════════════════════════════════════════════════════
 # SAVE REPORT
 # ══════════════════════════════════════════════════════════════════════════════
