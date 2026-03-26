@@ -1,0 +1,467 @@
+# BLOOM FILTER + LINEAR REGRESSION CONFIGURATION PREDICTOR
+# Uses Bloom Filter for feature reduction and Linear Regression for prediction
+
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LogisticRegression, Ridge
+from sklearn.multioutput import MultiOutputClassifier
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.metrics import accuracy_score
+from sklearn.impute import SimpleImputer
+from sklearn.feature_selection import SelectKBest, f_classif
+import hashlib
+import matplotlib.pyplot as plt
+import seaborn as sns
+from collections import Counter
+import warnings
+warnings.filterwarnings('ignore')
+
+# ==============================================================================
+# Bloom Filter Implementation
+# ==============================================================================
+
+class BloomFilter:
+    """Simple Bloom Filter for feature hashing/reduction"""
+    
+    def __init__(self, size=1000, num_hashes=3):
+        self.size = size
+        self.num_hashes = num_hashes
+        self.bit_array = np.zeros(size, dtype=bool)
+        
+    def _hash(self, item, seed):
+        """Hash function using hashlib"""
+        hash_obj = hashlib.md5((str(item) + str(seed)).encode())
+        return int(hash_obj.hexdigest(), 16) % self.size
+    
+    def add(self, item):
+        """Add item to bloom filter"""
+        for i in range(self.num_hashes):
+            idx = self._hash(item, i)
+            self.bit_array[idx] = True
+    
+    def contains(self, item):
+        """Check if item might be in the filter"""
+        for i in range(self.num_hashes):
+            idx = self._hash(item, i)
+            if not self.bit_array[idx]:
+                return False
+        return True
+    
+    def hash_features(self, X):
+        """Hash features to bloom filter indices"""
+        n_samples = X.shape[0]
+        n_features = X.shape[1]
+        hashed_features = np.zeros((n_samples, self.size))
+        
+        for i in range(n_samples):
+            for j in range(n_features):
+                value = X[i, j]
+                for k in range(self.num_hashes):
+                    idx = self._hash((j, value), k)
+                    hashed_features[i, idx] += value
+        
+        return hashed_features
+
+# ==============================================================================
+# Data Loading, Merging & Initial Cleaning
+# ==============================================================================
+
+csv_filename1 = 'train_with_top3_barnes_merged_prefetcher.csv'
+csv_filename2 = 'train_with_top3_cholesky_merged_prefetcher.csv'
+csv_filename3 = 'train_with_top3_fft_merged_prefetcher.csv'
+csv_filename4 = 'train_with_top3_radiosityy_merged_prefetcher.csv'
+
+print("BLOOM FILTER + LINEAR REGRESSION Configuration Predictor")
+print("=" * 60)
+
+# Load the datasets
+try:
+    df1 = pd.read_csv(csv_filename1)
+    df2 = pd.read_csv(csv_filename2)
+    df3 = pd.read_csv(csv_filename3)
+    df4 = pd.read_csv(csv_filename4)
+    
+    print(f"Data 1 loaded successfully! Shape: {df1.shape}")
+    print(f"Data 2 loaded successfully! Shape: {df2.shape}")
+    print(f"Data 3 loaded successfully! Shape: {df3.shape}")
+    print(f"Data 4 loaded successfully! Shape: {df4.shape}")
+
+    # Combine the dataframes
+    df = pd.concat([df1, df2, df3, df4], ignore_index=True)
+
+    print("\nDatasets combined successfully!")
+    print(f"Combined Data Shape: {df.shape}")
+    print(f"Combined Columns: {list(df.columns)}")
+
+except FileNotFoundError:
+    print("One or more CSV files not found. Please check the file paths.")
+    exit()
+
+# Configuration
+TARGET_COLUMNS = ['btbCore0_best', 'btbCore1_best', 'prefetcher_best']
+ALL_CONFIG_COLUMNS = [
+    'btbCore0_best', 'btbCore1_best', 'prefetcher_best', 'PPW_best',
+    'btbCore0_2nd', 'btbCore1_2nd', 'prefetcher_2nd', 'PPW_2nd', 'Diff_best_2nd',
+    'btbCore0_3rd', 'btbCore1_3rd', 'prefetcher_3rd', 'PPW_3rd', 'Diff_best_3rd'
+]
+
+METADATA_COLUMNS_TO_DROP = ['best-config', 'file', 'file_prev', 'period_start',
+                            'period_end', 'period_start_prev', 'period_end_prev',
+                            'directory_perf_prev', 'leaf_dir_prev', 'directory_power_prev',
+                            'leaf_dir_perf_prev', 'leaf_dir_power_prev', 'period_start_val_prev', 
+                            'period_end_val_perf_prev', 'period_start_val_perf_prev', 'period_start_val_power_prev',
+                            'period_end_val_power_prev']
+
+# Model parameters
+USE_BLOOM_FILTER = True
+BLOOM_SIZE = 500  # Size of bloom filter
+BLOOM_HASHES = 3  # Number of hash functions
+ENABLE_HYPERPARAMETER_TUNING = True
+RANDOM_STATE = 42
+
+# Drop metadata columns
+print(f"\nDropping metadata columns...")
+df = df.drop(columns=METADATA_COLUMNS_TO_DROP, errors='ignore')
+print(f"New data shape: {df.shape}")
+
+# Check required columns
+missing_cols = [col for col in ALL_CONFIG_COLUMNS if col not in df.columns]
+if missing_cols:
+    print(f"Missing columns: {missing_cols}")
+    exit()
+else:
+    print("All required columns found!")
+
+# 1. DATA PREPARATION
+print(f"\nDATA PREPARATION")
+print("-" * 40)
+
+# Exclude target and performance columns from features
+X = df.drop(ALL_CONFIG_COLUMNS, axis=1)
+y = df[TARGET_COLUMNS].copy()
+
+# Store top-3 configurations
+top3_configs = {
+    'best': df[['btbCore0_best', 'btbCore1_best', 'prefetcher_best', 'PPW_best']].copy(),
+    '2nd': df[['btbCore0_2nd', 'btbCore1_2nd', 'prefetcher_2nd', 'PPW_2nd']].copy(),
+    '3rd': df[['btbCore0_3rd', 'btbCore1_3rd', 'prefetcher_3rd', 'PPW_3rd']].copy()
+}
+
+print(f"Features shape: {X.shape}")
+print(f"Targets shape: {y.shape}")
+print(f"Target 1 (btbCore0) unique values: {len(y.iloc[:, 0].unique())}")
+print(f"Target 2 (btbCore1) unique values: {len(y.iloc[:, 1].unique())}")
+print(f"Target 3 (prefetcher) unique values: {len(y.iloc[:, 2].unique())}")
+
+# 2. FEATURE PREPROCESSING
+print(f"\nFEATURE PREPROCESSING")
+print("-" * 40)
+
+# Handle categorical features
+categorical_cols = X.select_dtypes(include=['object']).columns
+label_encoders = {}
+
+for col in categorical_cols:
+    le = LabelEncoder()
+    X[col] = le.fit_transform(X[col].astype(str))
+    label_encoders[col] = le
+    print(f"Encoded: {col}")
+
+# Encode prefetcher in targets
+prefetcher_encoder = LabelEncoder()
+y['prefetcher_best'] = prefetcher_encoder.fit_transform(y['prefetcher_best'].astype(str))
+print(f"\nEncoded prefetcher_best: {dict(zip(prefetcher_encoder.classes_, prefetcher_encoder.transform(prefetcher_encoder.classes_)))}")
+
+# Remove non-numeric columns
+numeric_cols = X.select_dtypes(include=[np.number]).columns
+X = X[numeric_cols]
+
+print(f"Final feature set: {X.shape}")
+
+# 3. TRAIN-TEST SPLIT
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=RANDOM_STATE
+)
+
+# Get corresponding top-3 data for test set
+test_indices = X_test.index
+test_top3 = {}
+for rank, data in top3_configs.items():
+    test_top3[rank] = data.loc[test_indices]
+
+# Scale features
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+
+# Handle NaN values
+print(f"\nCleaning data...")
+imputer = SimpleImputer(strategy='mean')
+X_train_scaled = imputer.fit_transform(X_train_scaled)
+X_test_scaled = imputer.transform(X_test_scaled)
+
+# Clean targets
+print(f"Before cleaning - y_train shape: {y_train.shape}, y_test shape: {y_test.shape}")
+
+for col in ['btbCore0_best', 'btbCore1_best']:
+    y_train[col] = pd.to_numeric(y_train[col], errors='coerce')
+    y_test[col] = pd.to_numeric(y_test[col], errors='coerce')
+
+# Remove rows with NaN
+mask_train = y_train.notna().all(axis=1)
+y_train = y_train[mask_train]
+X_train_scaled = X_train_scaled[mask_train.values]
+
+mask_test = y_test.notna().all(axis=1)
+y_test = y_test[mask_test]
+X_test_scaled = X_test_scaled[mask_test.values]
+
+# Update test_top3
+test_top3_cleaned = {}
+for rank, data in test_top3.items():
+    test_top3_cleaned[rank] = data[mask_test.values].reset_index(drop=True)
+    for col in [f'btbCore0_{rank}', f'btbCore1_{rank}']:
+        test_top3_cleaned[rank][col] = pd.to_numeric(test_top3_cleaned[rank][col], errors='coerce')
+    
+    # Handle prefetcher encoding
+    prefetch_col = test_top3_cleaned[rank][f'prefetcher_{rank}']
+    prefetch_col = prefetch_col.fillna('none')
+    prefetch_col = prefetch_col.astype(str).replace('nan', 'none')
+    valid_categories = set(prefetcher_encoder.classes_)
+    prefetch_col = prefetch_col.apply(lambda x: x if x in valid_categories else 'none')
+    test_top3_cleaned[rank][f'prefetcher_{rank}'] = prefetcher_encoder.transform(prefetch_col)
+    
+    test_top3_cleaned[rank][f'PPW_{rank}'] = pd.to_numeric(test_top3_cleaned[rank][f'PPW_{rank}'], errors='coerce')
+
+test_top3 = test_top3_cleaned
+y_test = y_test.reset_index(drop=True)
+
+print(f"After cleaning - y_train shape: {y_train.shape}, y_test shape: {y_test.shape}")
+
+# 4. BLOOM FILTER FEATURE HASHING (OPTIONAL)
+if USE_BLOOM_FILTER:
+    print(f"\nAPPLYING BLOOM FILTER")
+    print("-" * 40)
+    print(f"Original features: {X_train_scaled.shape[1]}")
+    print(f"Bloom filter size: {BLOOM_SIZE}")
+    print(f"Number of hash functions: {BLOOM_HASHES}")
+    
+    bloom = BloomFilter(size=BLOOM_SIZE, num_hashes=BLOOM_HASHES)
+    X_train_bloom = bloom.hash_features(X_train_scaled)
+    X_test_bloom = bloom.hash_features(X_test_scaled)
+    
+    print(f"Hashed features: {X_train_bloom.shape[1]}")
+    print(f"Feature reduction: {X_train_scaled.shape[1]} -> {X_train_bloom.shape[1]} ({(1 - BLOOM_SIZE/X_train_scaled.shape[1])*100:.1f}% reduction)")
+    
+    X_train_final = X_train_bloom
+    X_test_final = X_test_bloom
+else:
+    X_train_final = X_train_scaled
+    X_test_final = X_test_scaled
+
+# 5. MODEL TRAINING - LOGISTIC REGRESSION (for classification)
+print(f"\nMODEL TRAINING - LOGISTIC REGRESSION")
+print("-" * 40)
+
+if ENABLE_HYPERPARAMETER_TUNING:
+    print("Hyperparameter tuning enabled...")
+    
+    # Define parameter grid
+    param_grid = {
+        'estimator__C': [0.001, 0.01, 0.1, 1, 10, 100],
+        'estimator__penalty': ['l2'],
+        'estimator__solver': ['lbfgs', 'saga'],
+        'estimator__max_iter': [500, 1000, 2000]
+    }
+    
+    # Create multi-output classifier
+    base_lr = LogisticRegression(random_state=RANDOM_STATE)
+    lr_model = MultiOutputClassifier(base_lr, n_jobs=-1)
+    
+    # Grid search
+    grid_search = GridSearchCV(
+        lr_model,
+        param_grid,
+        cv=3,
+        scoring='accuracy',
+        n_jobs=-1,
+        verbose=1
+    )
+    
+    print("Fitting model...")
+    grid_search.fit(X_train_final, y_train)
+    
+    best_model = grid_search.best_estimator_
+    print(f"\nBest parameters: {grid_search.best_params_}")
+    print(f"Best CV score: {grid_search.best_score_:.4f}")
+    
+else:
+    print("Using default parameters...")
+    base_lr = LogisticRegression(
+        C=1.0,
+        max_iter=1000,
+        random_state=RANDOM_STATE
+    )
+    best_model = MultiOutputClassifier(base_lr, n_jobs=-1)
+    best_model.fit(X_train_final, y_train)
+
+# 6. PREDICTIONS AND EVALUATION
+print(f"\nPREDICTIONS AND EVALUATION")
+print("-" * 40)
+
+y_pred = best_model.predict(X_test_final)
+predictions = {
+    TARGET_COLUMNS[0]: y_pred[:, 0],
+    TARGET_COLUMNS[1]: y_pred[:, 1],
+    TARGET_COLUMNS[2]: y_pred[:, 2]
+}
+
+# Configuration frequency analysis
+predicted_configs = list(zip(predictions[TARGET_COLUMNS[0]], 
+                             predictions[TARGET_COLUMNS[1]],
+                             predictions[TARGET_COLUMNS[2]]))
+config_frequency = Counter(predicted_configs)
+
+print(f"\nMost frequently predicted configurations (btbCore0, btbCore1, prefetcher):")
+for config, count in config_frequency.most_common(10):
+    prefetch_decoded = prefetcher_encoder.inverse_transform([int(config[2])])[0]
+    print(f"  ({config[0]}, {config[1]}, {prefetch_decoded}): {count} times ({count/len(y_pred)*100:.1f}%)")
+
+# 7. TOP-K ACCURACY EVALUATION
+print(f"\nTOP-K ACCURACY EVALUATION")
+print("-" * 40)
+
+exact_matches = 0
+top3_matches = 0
+ppw_costs = {'exact': [], 'top3_miss': [], 'top3_hit': []}
+detailed_results = []
+
+num_samples = len(y_pred)
+
+for i in range(num_samples):
+    # Predicted configuration
+    pred_core0 = predictions[TARGET_COLUMNS[0]][i]
+    pred_core1 = predictions[TARGET_COLUMNS[1]][i]
+    pred_prefetch = predictions[TARGET_COLUMNS[2]][i]
+    pred_config = (pred_core0, pred_core1, pred_prefetch)
+
+    # Actual configuration from y_test
+    actual_core0 = y_test.iloc[i, 0]
+    actual_core1 = y_test.iloc[i, 1]
+    actual_prefetch = y_test.iloc[i, 2]
+    actual_best_config = (actual_core0, actual_core1, actual_prefetch)
+
+    # Actual configurations from top-3
+    actual_configs = []
+    for rank in ['best', '2nd', '3rd']:
+        rank_core0 = test_top3[rank].iloc[i][f'btbCore0_{rank}']
+        rank_core1 = test_top3[rank].iloc[i][f'btbCore1_{rank}']
+        rank_prefetch = test_top3[rank].iloc[i][f'prefetcher_{rank}']
+        rank_ppw = test_top3[rank].iloc[i][f'PPW_{rank}']
+        
+        try:
+            rank_ppw = float(rank_ppw)
+        except (ValueError, TypeError):
+            rank_ppw = np.nan
+        
+        actual_configs.append({
+            'rank': rank,
+            'config': (rank_core0, rank_core1, rank_prefetch),
+            'ppw': rank_ppw
+        })
+
+    # Check matches
+    exact_match = (pred_core0 == actual_core0) and (pred_core1 == actual_core1) and (pred_prefetch == actual_prefetch)
+    
+    top3_match = False
+    for cfg in actual_configs:
+        cfg_core0, cfg_core1, cfg_prefetch = cfg['config']
+        if (pred_core0 == cfg_core0) and (pred_core1 == cfg_core1) and (pred_prefetch == cfg_prefetch):
+            top3_match = True
+            break
+
+    if exact_match:
+        exact_matches += 1
+        ppw_costs['exact'].append(actual_configs[0]['ppw'])
+
+    if top3_match:
+        top3_matches += 1
+        matched_ppw = next(cfg['ppw'] for cfg in actual_configs 
+                          if (pred_core0 == cfg['config'][0]) and 
+                             (pred_core1 == cfg['config'][1]) and
+                             (pred_prefetch == cfg['config'][2]))
+        ppw_costs['top3_hit'].append(matched_ppw)
+    else:
+        ppw_costs['top3_miss'].append(actual_configs[0]['ppw'])
+
+    detailed_results.append({
+        'sample': i,
+        'predicted': pred_config,
+        'actual_best': actual_best_config,
+        'actual_2nd': actual_configs[1]['config'],
+        'actual_3rd': actual_configs[2]['config'],
+        'ppw_best': actual_configs[0]['ppw'],
+        'ppw_2nd': actual_configs[1]['ppw'],
+        'ppw_3rd': actual_configs[2]['ppw'],
+        'exact_match': exact_match,
+        'top3_match': top3_match
+    })
+
+# Calculate accuracies
+exact_accuracy = exact_matches / num_samples
+top3_accuracy = top3_matches / num_samples
+
+print(f"\nBLOOM FILTER + LINEAR REGRESSION RESULTS:")
+print(f"Individual Accuracies:")
+acc_0 = accuracy_score(y_test[TARGET_COLUMNS[0]], predictions[TARGET_COLUMNS[0]])
+acc_1 = accuracy_score(y_test[TARGET_COLUMNS[1]], predictions[TARGET_COLUMNS[1]])
+acc_2 = accuracy_score(y_test[TARGET_COLUMNS[2]], predictions[TARGET_COLUMNS[2]])
+print(f"  {TARGET_COLUMNS[0]} individual accuracy: {acc_0:.4f}")
+print(f"  {TARGET_COLUMNS[1]} individual accuracy: {acc_1:.4f}")
+print(f"  {TARGET_COLUMNS[2]} individual accuracy: {acc_2:.4f}")
+
+exact_match_check = (y_test.values == y_pred).all(axis=1)
+print(f"\nExact Match Debug:")
+print(f"Number of exact matches (numpy comparison): {exact_match_check.sum()}")
+print(f"Number of exact matches (loop count): {exact_matches}")
+
+print(f"\nCombined Accuracies (all 3 must match):")
+print(f"  Exact Match (Best Config):  {exact_accuracy:.4f} ({exact_matches}/{num_samples})")
+print(f"  Top-3 Match (Any of 3):     {top3_accuracy:.4f} ({top3_matches}/{num_samples})")
+print(f"  Improvement:                +{(top3_accuracy - exact_accuracy):.4f} ({top3_matches - exact_matches} more correct)")
+
+# 8. COMPARISON SUMMARY
+print(f"\nMODEL SUMMARY")
+print("-" * 40)
+print(f"Model: Bloom Filter + Logistic Regression")
+print(f"Bloom Filter Used: {USE_BLOOM_FILTER}")
+if USE_BLOOM_FILTER:
+    print(f"  Bloom Size: {BLOOM_SIZE}")
+    print(f"  Hash Functions: {BLOOM_HASHES}")
+    print(f"  Feature Reduction: {X_train_scaled.shape[1]} -> {BLOOM_SIZE}")
+print(f"\nKey Results:")
+print(f"  Exact match accuracy: {exact_accuracy:.4f}")
+print(f"  Top-3 match accuracy: {top3_accuracy:.4f}")
+print(f"  Total correct predictions: {exact_matches}/{num_samples}")
+print(f"  Top-3 additional correct: {top3_matches - exact_matches}")
+
+if ppw_costs['exact'] and ppw_costs['top3_hit']:
+    exact_costs = [x for x in ppw_costs['exact'] if not np.isnan(x)]
+    top3_costs = [x for x in ppw_costs['top3_hit'] if not np.isnan(x)]
+    
+    if exact_costs and top3_costs:
+        cost_pct = (np.mean(top3_costs) - np.mean(exact_costs)) / np.mean(exact_costs) * 100
+        print(f"  Performance cost of top-3 matching: {cost_pct:.2f}% PPW reduction")
+
+# 9. MODEL PERSISTENCE
+print(f"\nMODEL PERSISTENCE")
+print("-" * 40)
+print("To save the model:")
+print("import joblib")
+print("joblib.dump(best_model, 'bloom_lr_model.pkl')")
+print("joblib.dump(scaler, 'feature_scaler.pkl')")
+print("joblib.dump(prefetcher_encoder, 'prefetcher_encoder.pkl')")
+if USE_BLOOM_FILTER:
+    print("joblib.dump(bloom, 'bloom_filter.pkl')")
+print("\nANALYSIS COMPLETE!")

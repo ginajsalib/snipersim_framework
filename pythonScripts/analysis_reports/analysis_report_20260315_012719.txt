@@ -1,0 +1,294 @@
+
+═════════════════════════════════════════════════════════════════
+  LOADING SAVED MODEL
+═════════════════════════════════════════════════════════════════
+  Timestamp:    20260314_032046
+  n_estimators: 650  max_depth: None  max_features: None
+
+═════════════════════════════════════════════════════════════════
+  LOADING & PREPROCESSING DATA
+═════════════════════════════════════════════════════════════════
+  Loaded barnes: 48,902 rows
+  Loaded cholesky: 167,954 rows
+  Loaded radiosity: 82,486 rows
+  Combined: 299,342 rows
+  Valid samples after NaN drop: 299,342
+
+═════════════════════════════════════════════════════════════════
+  RUNNING PREDICTIONS
+═════════════════════════════════════════════════════════════════
+  Predicted 299,342 samples in 196.3s
+
+═════════════════════════════════════════════════════════════════
+  BUILDING RESULTS TABLE  (vectorised)
+═════════════════════════════════════════════════════════════════
+  Exact match:  93,444  (31.22%)
+  Top-3 match:  93,871  (31.36%)
+  Numpy exact check: 93,444  [OK]
+  Results table: 299,342 rows x 13 columns
+
+═════════════════════════════════════════════════════════════════
+  COMPUTING STATIC BASELINES
+═════════════════════════════════════════════════════════════════
+  barnes: best_static  = (4096.0, 2048.0, 'none', 'simple')
+              worst_static = (512.0, 4096.0, 'simple', 'none')
+  cholesky: best_static  = (1024.0, 2048.0, 'simple', nan)
+              worst_static = (4096.0, 1024.0, 'none', nan)
+  radiosity: best_static  = (4096.0, 2048.0, 'none', nan)
+              worst_static = (512.0, 1024.0, 'none', 'simple')
+
+  Analysis run: 2026-03-15 01:27:11   |   Model: 20260314_032046
+
+═════════════════════════════════════════════════════════════════
+  ANALYSIS 1 — PPW % LOSS  (Model Prediction vs Optimal)
+═════════════════════════════════════════════════════════════════
+
+  ── OVERALL
+  ───────────────────────────────────────────────────────
+    Samples: 299,342
+    Exact match (1st):  93,444  ( 31.2%)
+    Match 2nd best:        288  (  0.1%)
+    Match 3rd best:        139  (  0.0%)
+    Top-3 total:        93,871  ( 31.4%)
+    Miss:               205,471  ( 68.6%)
+    PPW % loss stats:     mean=16.18%  median=0.15%  p90=70.56%  max=100.00%
+    Model prediction Loss distribution (% of 299,342 total samples):
+      0%  (exact match)       94,795  ( 31.7%)
+      0-1%                    40,633  ( 13.6%)
+      1-5%                    10,196  (  3.4%)
+      5-10%                    8,141  (  2.7%)
+      10-20%                   5,947  (  2.0%)
+      >20%                    55,667  ( 18.6%)
+
+  ── BARNES
+  ───────────────────────────────────────────────────────
+    Samples: 48,902
+    Exact match (1st):  30,885  ( 63.2%)
+    Match 2nd best:        219  (  0.4%)
+    Match 3rd best:         75  (  0.2%)
+    Top-3 total:        31,179  ( 63.8%)
+    Miss:               17,723  ( 36.2%)
+    PPW % loss stats:     mean=3.41%  median=0.00%  p90=1.54%  max=90.52%
+    Model prediction Loss distribution (% of 48,902 total samples):
+      0%  (exact match)       31,176  ( 63.8%)
+      0-1%                     9,419  ( 19.3%)
+      1-5%                     4,873  ( 10.0%)
+      5-10%                      117  (  0.2%)
+      10-20%                      34  (  0.1%)
+      >20%                     2,285  (  4.7%)
+
+  ── CHOLESKY
+  ───────────────────────────────────────────────────────
+    Samples: 167,954
+    Exact match (1st):  30,958  ( 18.4%)
+    Match 2nd best:         31  (  0.0%)
+    Match 3rd best:         40  (  0.0%)
+    Top-3 total:        31,029  ( 18.5%)
+    Miss:               136,925  ( 81.5%)
+    PPW % loss stats:     mean=18.27%  median=0.42%  p90=63.90%  max=100.00%
+    Model prediction Loss distribution (% of 167,954 total samples):
+      0%  (exact match)       31,970  ( 19.0%)
+      0-1%                    11,915  (  7.1%)
+      1-5%                     2,780  (  1.7%)
+      5-10%                    5,323  (  3.2%)
+      10-20%                   4,634  (  2.8%)
+      >20%                    28,992  ( 17.3%)
+
+  ── RADIOSITY
+  ───────────────────────────────────────────────────────
+    Samples: 82,486
+    Exact match (1st):  31,601  ( 38.3%)
+    Match 2nd best:         38  (  0.0%)
+    Match 3rd best:         24  (  0.0%)
+    Top-3 total:        31,663  ( 38.4%)
+    Miss:               50,823  ( 61.6%)
+    PPW % loss stats:     mean=21.46%  median=0.23%  p90=76.00%  max=99.89%
+    Model prediction Loss distribution (% of 82,486 total samples):
+      0%  (exact match)       31,649  ( 38.4%)
+      0-1%                    19,299  ( 23.4%)
+      1-5%                     2,543  (  3.1%)
+      5-10%                    2,701  (  3.3%)
+      10-20%                   1,279  (  1.6%)
+      >20%                    24,390  ( 29.6%)
+
+═════════════════════════════════════════════════════════════════
+  ANALYSIS 2 — STATIC BASELINE COMPARISON
+═════════════════════════════════════════════════════════════════
+  Metric: average PPW per period  (higher = better)
+
+  Benchmark           Optimal    Best Static     Model Pred   Worst Static
+  --------------------------------------------------------------
+  barnes       67,909,515,496  5,387,240,134 64,559,022,187      3,673,358
+  cholesky     67,957,548,347 14,778,484,670 79,206,317,579    177,668,241
+  radiosity    114,242,829,239 16,618,144,354 94,688,200,889    255,678,737
+
+  % gap vs optimal  (negative = worse than optimal):
+  Benchmark       Best Static     Model Pred   Worst Static
+  ------------------------------------------------
+  barnes              -92.07%         -4.93%        -99.99%
+  cholesky            -78.25%        +16.55%        -99.74%
+  radiosity           -85.45%        -17.12%        -99.78%
+
+  Static configs (btb0, btb1, pf_core0, pf_core1):
+    barnes        best:  (4096.0, 2048.0, 'none', 'simple')
+                  worst: (512.0, 4096.0, 'simple', 'none')
+    cholesky      best:  (1024.0, 2048.0, 'simple', nan)
+                  worst: (4096.0, 1024.0, 'none', nan)
+    radiosity     best:  (4096.0, 2048.0, 'none', nan)
+                  worst: (512.0, 1024.0, 'none', 'simple')
+
+═════════════════════════════════════════════════════════════════
+  ANALYSIS 3 — GAP BETWEEN BEST AND 2ND-BEST CONFIG
+═════════════════════════════════════════════════════════════════
+  How much PPW do you lose by picking 2nd instead of 1st?
+  (Small gap -> 2nd is nearly as good; large gap -> 1st is critical)
+
+  ── OVERALL
+  ───────────────────────────────────────────────────────
+    Samples with gap data: 236,041
+    Stats:   mean=16.82%  median=0.94%  p90=63.48%  max=99.98%
+
+    Gap distribution (% of 236,041 samples with PPW data):
+      < 0.5%   (nearly identical)  112,246  ( 47.6%)
+      0.5-2%   (minor difference)   14,296  (  6.1%)
+      2-5%     (moderate)            10,968  (  4.6%)
+      5-10%    (significant)          16,121  (  6.8%)
+      10-20%   (large)                15,550  (  6.6%)
+      >20%     (critical choice)      66,860  ( 28.3%)
+    Corr(gap, exact_match): 0.123  (larger gap -> easier to get right)
+
+  ── BARNES
+  ───────────────────────────────────────────────────────
+    Samples with gap data: 47,904
+    Stats:   mean=24.81%  median=1.40%  p90=75.94%  max=99.64%
+
+    Gap distribution (% of 47,904 samples with PPW data):
+      < 0.5%   (nearly identical)  19,728  ( 41.2%)
+      0.5-2%   (minor difference)    5,168  ( 10.8%)
+      2-5%     (moderate)             1,088  (  2.3%)
+      5-10%    (significant)           1,024  (  2.1%)
+      10-20%   (large)                 1,808  (  3.8%)
+      >20%     (critical choice)      19,088  ( 39.8%)
+    Corr(gap, exact_match): 0.464  (larger gap -> easier to get right)
+
+  ── CHOLESKY
+  ───────────────────────────────────────────────────────
+    Samples with gap data: 106,013
+    Stats:   mean=11.02%  median=0.39%  p90=36.63%  max=99.98%
+
+    Gap distribution (% of 106,013 samples with PPW data):
+      < 0.5%   (nearly identical)  53,661  ( 50.6%)
+      0.5-2%   (minor difference)    4,974  (  4.7%)
+      2-5%     (moderate)             5,287  (  5.0%)
+      5-10%    (significant)          10,885  ( 10.3%)
+      10-20%   (large)                 8,591  (  8.1%)
+      >20%     (critical choice)      22,615  ( 21.3%)
+    Corr(gap, exact_match): -0.019  (larger gap -> harder to get right — CONCERNING)
+
+  ── RADIOSITY
+  ───────────────────────────────────────────────────────
+    Samples with gap data: 82,124
+    Stats:   mean=19.65%  median=1.24%  p90=71.72%  max=99.94%
+
+    Gap distribution (% of 82,124 samples with PPW data):
+      < 0.5%   (nearly identical)  38,857  ( 47.3%)
+      0.5-2%   (minor difference)    4,154  (  5.1%)
+      2-5%     (moderate)             4,593  (  5.6%)
+      5-10%    (significant)           4,212  (  5.1%)
+      10-20%   (large)                 5,151  (  6.3%)
+      >20%     (critical choice)      25,157  ( 30.6%)
+    Corr(gap, exact_match): -0.093  (larger gap -> harder to get right — CONCERNING)
+
+═════════════════════════════════════════════════════════════════
+  ANALYSIS 4 — NO-CHANGE BASELINE  (Keep Previous Config)
+═════════════════════════════════════════════════════════════════
+  If we always use the previous period's config instead of predicting,
+  how often is it still in the top 3, and how much PPW do we lose?
+
+  ── OVERALL
+  ───────────────────────────────────────────────────────
+    Samples: 299,342  (prev-config available: 299,342)
+    Prev config IS best:       11,459  (  3.8%)
+    Prev config in top-3:      31,858  ( 10.6%)
+    Prev config NOT in top-3:  267,484  ( 89.4%)
+    PPW % loss stats:   mean=28.65%  median=14.71%  p90=75.98%  max=100.00%
+    No-change baseline Loss distribution (% of 299,342 total samples):
+      0%  (exact match)       13,859  (  4.6%)
+      0-1%                    61,824  ( 20.7%)
+      1-5%                    13,064  (  4.4%)
+      5-10%                   13,104  (  4.4%)
+      10-20%                  13,290  (  4.4%)
+      >20%                    101,192  ( 33.8%)
+
+    Model vs No-Change comparison:
+                                            Model    No-Change
+      Exact / Is-Best match            93,444  ( 31.2%)   11,459  (  3.8%)
+      Top-3 match                      93,871  ( 31.4%)   31,858  ( 10.6%)
+      Avg PPW % loss                       16.18%       28.65%
+      -> MODEL has lower average PPW loss (delta = 12.47%)
+
+  ── BARNES
+  ───────────────────────────────────────────────────────
+    Samples: 48,902  (prev-config available: 48,902)
+    Prev config IS best:        2,994  (  6.1%)
+    Prev config in top-3:       8,982  ( 18.4%)
+    Prev config NOT in top-3:  39,920  ( 81.6%)
+    PPW % loss stats:   mean=33.10%  median=16.25%  p90=78.44%  max=99.77%
+    No-change baseline Loss distribution (% of 48,902 total samples):
+      0%  (exact match)        3,566  (  7.3%)
+      0-1%                    13,666  ( 27.9%)
+      1-5%                     5,110  ( 10.4%)
+      5-10%                      666  (  1.4%)
+      10-20%                   1,359  (  2.8%)
+      >20%                    23,537  ( 48.1%)
+
+    Model vs No-Change comparison:
+                                            Model    No-Change
+      Exact / Is-Best match            30,885  ( 63.2%)    2,994  (  6.1%)
+      Top-3 match                      31,179  ( 63.8%)    8,982  ( 18.4%)
+      Avg PPW % loss                        3.41%       33.10%
+      -> MODEL has lower average PPW loss (delta = 29.69%)
+
+  ── CHOLESKY
+  ───────────────────────────────────────────────────────
+    Samples: 167,954  (prev-config available: 167,954)
+    Prev config IS best:        4,122  (  2.5%)
+    Prev config in top-3:      10,378  (  6.2%)
+    Prev config NOT in top-3:  157,576  ( 93.8%)
+    PPW % loss stats:   mean=24.67%  median=17.92%  p90=65.28%  max=100.00%
+    No-change baseline Loss distribution (% of 167,954 total samples):
+      0%  (exact match)        5,882  (  3.5%)
+      0-1%                    17,790  ( 10.6%)
+      1-5%                     4,162  (  2.5%)
+      5-10%                    8,738  (  5.2%)
+      10-20%                   8,270  (  4.9%)
+      >20%                    41,329  ( 24.6%)
+
+    Model vs No-Change comparison:
+                                            Model    No-Change
+      Exact / Is-Best match            30,958  ( 18.4%)    4,122  (  2.5%)
+      Top-3 match                      31,029  ( 18.5%)   10,378  (  6.2%)
+      Avg PPW % loss                       18.27%       24.67%
+      -> MODEL has lower average PPW loss (delta = 6.39%)
+
+  ── RADIOSITY
+  ───────────────────────────────────────────────────────
+    Samples: 82,486  (prev-config available: 82,486)
+    Prev config IS best:        4,343  (  5.3%)
+    Prev config in top-3:      12,498  ( 15.2%)
+    Prev config NOT in top-3:  69,988  ( 84.8%)
+    PPW % loss stats:   mean=30.23%  median=8.12%  p90=76.82%  max=99.89%
+    No-change baseline Loss distribution (% of 82,486 total samples):
+      0%  (exact match)        4,411  (  5.3%)
+      0-1%                    30,368  ( 36.8%)
+      1-5%                     3,792  (  4.6%)
+      5-10%                    3,700  (  4.5%)
+      10-20%                   3,661  (  4.4%)
+      >20%                    36,326  ( 44.0%)
+
+    Model vs No-Change comparison:
+                                            Model    No-Change
+      Exact / Is-Best match            31,601  ( 38.3%)    4,343  (  5.3%)
+      Top-3 match                      31,663  ( 38.4%)   12,498  ( 15.2%)
+      Avg PPW % loss                       21.46%       30.23%
+      -> MODEL has lower average PPW loss (delta = 8.76%)
