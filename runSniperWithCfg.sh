@@ -51,7 +51,7 @@ prefetcher = ${prefetch1}
 EOF
 
           # Construct the output directory name
-          directory="/export/config_l2_${l2}_l3MB_${l3}_prefetch_${prefetch}_branch_${bp0}-${bp1}_${benchmark}-intervals"
+          directory="/export/config_l2_${l2}_l3MB_${l3}_prefetch_${prefetch0}_${prefetch1}_branch_${bp0}-${bp1}_${benchmark}-intervals"
           mkdir -p "$directory"
 
           # Build benchmark name
