@@ -159,10 +159,12 @@ def calc_inference_energy(model, tech_params):
     Returns:
         inference_energy_pJ
     """
-    n_estimators = model.n_estimators
-    max_depth = model.max_depth if model.max_depth else 15
-    n_features = len(model.estimators_[0].feature_importances_)
-
+    #n_estimators = model.n_estimators
+    #max_depth = model.max_depth if model.max_depth else 15
+    #n_features = len(model.estimators_[0].feature_importances_)
+    n_estimators = 550
+    max_depth = 22
+    n_features = 130
     # Estimate operations per inference
     n_comparisons = n_estimators * max_depth  # Each tree traverses depth nodes
     n_mem_accesses = n_estimators * n_features  # Feature lookups
@@ -248,8 +250,8 @@ def run_cost_analysis(benchmark, model_dir, output_csv, input_csv=None):
     model, ts, model_path = load_model(model_dir)
     print(f"  Model timestamp: {ts}")
     print(f"  Model path: {model_path}")
-    print(f"  n_estimators: {model.n_estimators}")
-    print(f"  max_depth: {model.max_depth}")
+   # print(f"  n_estimators: {model.n_estimators}")
+   # print(f"  max_depth: {model.max_depth}")
 
     # Load config data
     print(f"\n{'='*70}")
@@ -332,7 +334,7 @@ def run_cost_analysis(benchmark, model_dir, output_csv, input_csv=None):
     if 'PPW_best' in df.columns:
         # Convert PPW to energy-aware metric
         interval_inst = 500000  # 500K instructions per interval
-        interval_time = interval_inst / (df['ips'].mean() if 'ips' in df.columns else 1e9)
+        interval_time = interval_inst / (df['ips_prev'].mean() if 'ips_prev' in df.columns else 1e9)
 
         # Net PPW = raw PPW - overhead
         df['net_ppw'] = df['PPW_best'] - (df['inference_energy_pJ'] + df['reconfig_energy_pJ']) / interval_time
