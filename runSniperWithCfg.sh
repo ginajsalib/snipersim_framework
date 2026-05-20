@@ -5,7 +5,7 @@ cd /root/benchmarks || exit 1
 
 # Configuration parameters
 
-cache_sizes_l2=(215 512 1024)
+cache_sizes_l2=(256 512 1024)
 cache_sizes_l3MB=(4096 12288 16384)
 
 #cache_sizes_l2=(256)
