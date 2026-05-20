@@ -23,6 +23,9 @@ CFG_DIR="/root/benchmarks"
 # Loop through all combinations
 for l20 in "${cache_sizes_l2[@]}"; do
   for l21 in "${cache_sizes_l2[@]}"; do
+  if [ "$l20" -eq "$l21" ]; then
+      continue
+    fi
    for l3 in "${cache_sizes_l3MB[@]}"; do
     for prefetch0 in "${prefetchers[@]}"; do
       for prefetch1 in "${prefetchers[@]}"; do  
