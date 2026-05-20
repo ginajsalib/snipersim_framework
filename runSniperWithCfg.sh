@@ -5,7 +5,7 @@ cd /root/benchmarks || exit 1
 
 # Configuration parameters
 
-cache_sizes_l2=(512 1024)
+cache_sizes_l2=(215 512 1024)
 cache_sizes_l3MB=(4096 12288 16384)
 
 #cache_sizes_l2=(256)
@@ -21,8 +21,9 @@ DISPATCH_WIDTH=4
 CFG_DIR="/root/benchmarks"
 
 # Loop through all combinations
-for l2 in "${cache_sizes_l2[@]}"; do
-  for l3 in "${cache_sizes_l3MB[@]}"; do
+for l20 in "${cache_sizes_l2[@]}"; do
+  for l21 in "${cache_sizes_l2[@]}"; do
+   for l3 in "${cache_sizes_l3MB[@]}"; do
     for prefetch0 in "${prefetchers[@]}"; do
       for prefetch1 in "${prefetchers[@]}"; do  
         for bp0 in "${branch_predictor_sizes[@]}"; do
@@ -38,6 +39,7 @@ num_entries = ${bp0}
 
 [perf_model/l2_cache]
 prefetcher = ${prefetch0}
+cache_size = ${l20}
 EOF
 
           cat <<EOF > "$CFG_DIR/core1.cfg"
@@ -48,10 +50,11 @@ dispatch_width = ${DISPATCH_WIDTH}
 num_entries = ${bp1}
 [perf_model/l2_cache]
 prefetcher = ${prefetch1}
+cache_size = ${l21}
 EOF
 
           # Construct the output directory name
-          directory="/export/config_l2_${l2}_l3MB_${l3}_prefetch_${prefetch0}_${prefetch1}_branch_${bp0}-${bp1}_${benchmark}-intervals"
+          directory="/export/config_l2_${l20}_${l21}_l3MB_${l3}_prefetch_${prefetch0}_${prefetch1}_branch_${bp0}-${bp1}_${benchmark}-intervals"
           mkdir -p "$directory"
 
           # Build benchmark name
@@ -69,7 +72,7 @@ EOF
             "-s" "powertrace-ins.py"
             "-s" "stop-by-icount:1000000000" 
             "-d" "$directory"
-            "-g" "perf_model/l2_cache/cache_size=${l2}"
+        
             "-g" "perf_model/l3_cache/cache_size=${l3}"
      
             "-g" "perf_model/branch_predictor/num_ways=4"
@@ -89,4 +92,4 @@ EOF
     done
   done
 done
-
+done
