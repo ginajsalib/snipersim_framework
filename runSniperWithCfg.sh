@@ -19,19 +19,40 @@ benchmark="barnes"
 NUM_CORES=2
 DISPATCH_WIDTH=4
 CFG_DIR="/root/benchmarks"
+RESUME_L20=1024
+RESUME_L21=512
+RESUME_L3=4096
+RESUME_PREFETCH0="none"
+RESUME_PREFETCH1="simple"
+RESUME_BP0=1024
+RESUME_BP1=2048
+RESUME=true
 
 # Loop through all combinations
 for l20 in "${cache_sizes_l2[@]}"; do
   for l21 in "${cache_sizes_l2[@]}"; do
-  if [ "$l20" -eq "$l21" ]; then
+    if [ "$l20" -eq "$l21" ]; then
       continue
     fi
-   for l3 in "${cache_sizes_l3MB[@]}"; do
-    for prefetch0 in "${prefetchers[@]}"; do
-      for prefetch1 in "${prefetchers[@]}"; do  
-        for bp0 in "${branch_predictor_sizes[@]}"; do
-          for bp1 in "${branch_predictor_sizes[@]}"; do
+    for l3 in "${cache_sizes_l3MB[@]}"; do
+      for prefetch0 in "${prefetchers[@]}"; do
+        for prefetch1 in "${prefetchers[@]}"; do
+          for bp0 in "${branch_predictor_sizes[@]}"; do
+            for bp1 in "${branch_predictor_sizes[@]}"; do
 
+              if [ "$RESUME" = true ]; then
+                if [ "$l20" -eq "$RESUME_L20" ] && \
+                   [ "$l21" -eq "$RESUME_L21" ] && \
+                   [ "$l3" -eq "$RESUME_L3" ] && \
+                   [ "$prefetch0" = "$RESUME_PREFETCH0" ] && \
+                   [ "$prefetch1" = "$RESUME_PREFETCH1" ] && \
+                   [ "$bp0" -eq "$RESUME_BP0" ] && \
+                   [ "$bp1" -eq "$RESUME_BP1" ]; then
+                  RESUME=false
+                else
+                  continue
+                fi
+              fi
           # Create config files for core0 and core1
           cat <<EOF > "$CFG_DIR/core0.cfg"
 [perf_model/core/interval_timer]
