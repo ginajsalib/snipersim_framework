@@ -63,7 +63,7 @@ COST_ANALYSIS_PASSTHROUGH = [
     'benchmark', 'period_start', 'period_end',
     'btbCore0_prev', 'btbCore1_prev',
     'prefetcher_prev', 'L2_prev', 'L3_prev',
-    'PPW_best', 'ips',
+    'PPW_best', 'ips_prev',
 ]
  
  
@@ -331,7 +331,7 @@ def predict(input_csv, model_dir, output_csv, benchmark=None):
         'benchmark', 'period_start', 'period_end',
         'btbCore0', 'btbCore1', 'prefetcher', 'L2', 'L3',
         'btbCore0_prev', 'btbCore1_prev', 'prefetcher_prev', 'L2_prev', 'L3_prev',
-        'PPW_best', 'ips',
+        'PPW_best', 'ips_prev',
         'btbCore0_best', 'btbCore1_best',
         'prefetcher_core0_best', 'prefetcher_core1_best',
         'l2_size_best', 'l3_size_best',
