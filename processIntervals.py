@@ -150,7 +150,7 @@ def get_period_markers(output):
 
 def main():
     all_results = []
-    benchmark_name = 'cholesky'
+    benchmark_name = 'barnes'
     prefetcher_setting = "simple"
     
     for root, dirs, files in os.walk(BASE_DIR):
@@ -158,8 +158,8 @@ def main():
         current_dir = os.path.basename(root)
         if benchmark_name not in current_dir.lower():
             continue
-        if prefetcher_setting not in current_dir.lower():
-            continue
+     #   if prefetcher_setting not in current_dir.lower():
+     #       continue
 
         if not ('sim.out' in files or 'stats.out' in files):
             continue
@@ -213,7 +213,7 @@ def main():
             combined_data['period'] = '{}:{}'.format(start_marker, end_marker)
             all_results.append(combined_data)
 
-    csv_file = os.path.join(BASE_DIR, benchmark_name+'_interval_metrics_power.csv')
+    csv_file = os.path.join(BASE_DIR, benchmark_name+'_interval_metrics_all_combinations.csv')
     with open(csv_file, 'w') as csvfile:
         # Define fieldnames including derived metrics
         fieldnames = ['directory', 'period']
