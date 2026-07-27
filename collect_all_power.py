@@ -3,28 +3,42 @@ import re
 import csv
 import parse_mcpat_power  # assumes parse_mcpat_power.py is in the same dir
 
-def collect_directories(base_dir):
+def collect_directories(base_dirs):
+    """
+    base_dirs: a single path string, or a list of path strings to scan.
+    """
+    if isinstance(base_dirs, str):
+        base_dirs = [base_dirs]
+
     dirs = []
     pattern = re.compile(
         r'config_l2_(\d+)(?:_(\d+))?_l3MB_(\d+)_prefetch_(none|simple)(?:_(none|simple))?_branch_(\d+)-(\d+)_barnes-intervals$'
     )
-    for entry in os.listdir(base_dir):
-        path = os.path.join(base_dir, entry)
-        if os.path.isdir(path):
-            match = pattern.match(entry)
-            if match:
-                l2_core0      = int(match.group(1))
-                l2_core1      = int(match.group(2)) if match.group(2) is not None else l2_core0
-                l3_size       = int(match.group(3))
-                prefetch_core0 = match.group(4)
-                prefetch_core1 = match.group(5) if match.group(5) is not None else prefetch_core0
-                btb0          = int(match.group(6))
-                btb1          = int(match.group(7))
-                dirs.append((path, l2_core0, l2_core1, l3_size, prefetch_core0, prefetch_core1, btb0, btb1))
+    for base_dir in base_dirs:
+        if not os.path.isdir(base_dir):
+            print("[Warning] base dir does not exist, skipping:", base_dir)
+            continue
+        for entry in os.listdir(base_dir):
+            path = os.path.join(base_dir, entry)
+            if os.path.isdir(path):
+                match = pattern.match(entry)
+                if match:
+                    l2_core0      = int(match.group(1))
+                    l2_core1      = int(match.group(2)) if match.group(2) is not None else l2_core0
+                    l3_size       = int(match.group(3))
+                    prefetch_core0 = match.group(4)
+                    prefetch_core1 = match.group(5) if match.group(5) is not None else prefetch_core0
+                    btb0          = int(match.group(6))
+                    btb1          = int(match.group(7))
+                    dirs.append((path, l2_core0, l2_core1, l3_size, prefetch_core0, prefetch_core1, btb0, btb1))
+                else:
+                    # helpful for debugging: flag dirs that look relevant but didn't match
+                    if 'config_' in entry and 'barnes' in entry.lower():
+                        print("[Notice] dir looks relevant but did not match pattern:", path)
     return dirs
 
-def collect_all_power(base_dir, output_csv, benchmark_name):
-    dirs = collect_directories(base_dir)
+def collect_all_power(base_dirs, output_csv, benchmark_name):
+    dirs = collect_directories(base_dirs)
     results = []
     for path, l2_core0, l2_core1, l3_size, prefetch_core0, prefetch_core1, btb0, btb1 in dirs:
         files = [f for f in os.listdir(path) if f.startswith('power-') and f.endswith('.txt')]
@@ -41,7 +55,6 @@ def collect_all_power(base_dir, output_csv, benchmark_name):
             data['btbCore1']       = btb1
             data['directory']      = path
             results.append(data)
-
     with open(output_csv, 'w', newline="", encoding="utf-8") as csvfile:
         fieldnames = [
     # identity
@@ -75,14 +88,13 @@ def collect_all_power(base_dir, output_csv, benchmark_name):
         writer.writeheader()
         for row in results:
             writer.writerow(row)
-
     print("Done. Parsed {} power files from {} configurations.".format(len(results), len(dirs)))
     print("Output saved to {}".format(output_csv))
 
-
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) != 4:
-        print("Usage: python collect_all_power.py <base_dir> <output_csv> <benchmark_name>")
+    if len(sys.argv) < 4:
+        print("Usage: python collect_all_power.py <base_dir1>[,base_dir2,...] <output_csv> <benchmark_name>")
     else:
-        collect_all_power(sys.argv[1], sys.argv[2], sys.argv[3])
+        base_dirs_arg = sys.argv[1].split(',')
+        collect_all_power(base_dirs_arg, sys.argv[2], sys.argv[3])
