@@ -1,35 +1,65 @@
 import pandas as pd
 import re
 
-def find_best_btbsizes_per_interval(
+def find_best_config_per_interval(
     input_csv: str,
     output_csv: str,
     tolerance: int = 100
 ):
     # Load CSV
     df = pd.read_csv(input_csv)
-    
-    # Check required columns
-    required_cols = ["btbCore0", "btbCore1", "period_start", "period_end", "ppw", "Prefetch"]
-    for col in required_cols:
-        if col not in df.columns:
-            raise ValueError(f"Missing required column: {col}")
 
-    # Prefetcher column (optional)
-    has_prefetcher = "Prefetch" in df.columns
+    # Columns we need, with flexible (case/separator-insensitive) name matching
+    # to handle either naming convention (space-separated from parse_benchmark_data.py,
+    # or camelCase from collect_all_power.py) depending on what survived the merge.
+    wanted_cols = {
+        'l2_core0': 'L2 core 0',
+        'l2_core1': 'L2 core 1',
+        'l3': 'L3',
+        'prefetch_core0': 'Prefetch core 0',
+        'prefetch_core1': 'Prefetch core 1',
+        'btb_core0': 'BTB core 0',
+        'btb_core1': 'BTB core 1',
+        'period_start': 'period_start',
+        'period_end': 'period_end',
+        'ppw': 'ppw',
+    }
 
-    # Parse "periodicins-12345" → 12345
+    def find_col(expected_name):
+        norm = lambda s: s.lower().replace('.', '').replace('_', '').replace(' ', '')
+        for col in df.columns:
+            if norm(col) == norm(expected_name):
+                return col
+        for col in df.columns:
+            if norm(expected_name) in norm(col):
+                return col
+        return None
+
+    col_mapping = {}
+    missing = []
+    for key, expected_name in wanted_cols.items():
+        found = find_col(expected_name)
+        if found:
+            col_mapping[key] = found
+        else:
+            missing.append(expected_name)
+    if missing:
+        raise ValueError(
+            f"Missing required column(s): {missing}. Available columns: {list(df.columns)}"
+        )
+
+    # Parse "periodicins-12345" -> 12345
     def parse_ins(val):
         if isinstance(val, str):
             m = re.search(r"periodicins-(\d+)", val)
             return int(m.group(1)) if m else None
         return None
 
-    df["start_num"] = df["period_start"].apply(parse_ins)
-    df["end_num"] = df["period_end"].apply(parse_ins)
+    df["start_num"] = df[col_mapping['period_start']].apply(parse_ins)
+    df["end_num"] = df[col_mapping['period_end']].apply(parse_ins)
 
     # Drop invalid rows
-    df = df.dropna(subset=["start_num", "end_num", "ppw"])
+    df = df.dropna(subset=["start_num", "end_num", col_mapping['ppw']])
 
     # Sort for grouping stability
     df = df.sort_values(by=["start_num", "end_num"]).reset_index(drop=True)
@@ -51,22 +81,23 @@ def find_best_btbsizes_per_interval(
     output_rows = []
     for group in groups:
         group_df = pd.DataFrame(group["rows"])
-        best_row = group_df.loc[group_df["ppw"].idxmax()]
+        best_row = group_df.loc[group_df[col_mapping['ppw']].idxmax()]
+
         output = {
             "interval_start": group["start"],
             "interval_end": group["end"],
-            "btbCore0": best_row["btbCore0"],
-            "btbCore1": best_row["btbCore1"],
-            "prefetcher": best_row["Prefetch"],
-            "config": 
-                best_row['btbCore0'].astype(str) + '_' + 
-                best_row['btbCore1'].astype(str) + '_' + 
-                best_row['Prefetch'],
-        
-            "PPW": best_row["ppw"]
+            "L2 core 0": best_row[col_mapping['l2_core0']],
+            "L2 core 1": best_row[col_mapping['l2_core1']],
+            "L3": best_row[col_mapping['l3']],
+            "Prefetch core 0": best_row[col_mapping['prefetch_core0']],
+            "Prefetch core 1": best_row[col_mapping['prefetch_core1']],
+            "BTB core 0": best_row[col_mapping['btb_core0']],
+            "BTB core 1": best_row[col_mapping['btb_core1']],
+            "config": '_'.join(str(best_row[col_mapping[k]]) for k in [
+                'l2_core0', 'l2_core1', 'l3', 'prefetch_core0', 'prefetch_core1', 'btb_core0', 'btb_core1'
+            ]),
+            "PPW": best_row[col_mapping['ppw']],
         }
-        if has_prefetcher:
-            output["prefetcher"] = best_row["Prefetch"]
         output_rows.append(output)
 
     # Create output dataframe
@@ -74,17 +105,15 @@ def find_best_btbsizes_per_interval(
 
     # Save to output CSV
     result_df.to_csv(output_csv, index=False)
-    print(f" Best configurations saved to {output_csv}")
+    print(f"Best configurations saved to {output_csv}")
 
 
-# Example usage
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) >= 2:
-        input_csv = sys.argv[1] 
+    if len(sys.argv) >= 3:
+        input_csv = sys.argv[1]
         output_csv = sys.argv[2]
-    find_best_btbsizes_per_interval(
-        input_csv,
-        output_csv,
-        tolerance=100
-    )
+        tolerance = int(sys.argv[3]) if len(sys.argv) > 3 else 100
+        find_best_config_per_interval(input_csv, output_csv, tolerance=tolerance)
+    else:
+        print("Usage: python script.py <input_file.csv> <output_file.csv> [tolerance]")
