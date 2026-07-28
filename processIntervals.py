@@ -147,9 +147,9 @@ def calculate_derived_metrics(metrics_data):
 def get_period_markers(output):
     markers = output.strip().split(',')
     return [m.strip() for m in markers]
-    
+
+
 def main():
-    all_results = []
     benchmark_name = 'barnes'
     prefetcher_setting = "simple"
 
@@ -160,79 +160,115 @@ def main():
     dirs_with_valid_periods = 0
     dirs_with_roi_markers = 0
     dirs_processed = 0
-    dirs_per_base = {base: 0 for base in BASE_DIRS}  # track split across bases
+    dirs_per_base = {base: 0 for base in BASE_DIRS}
+    total_rows_written = 0
 
-    for base_dir in BASE_DIRS:
-        if not os.path.isdir(base_dir):
-            print("[Warning] base dir does not exist, skipping:", base_dir)
-            continue
+    derived_metric_names = [
+        'l2_most_usage', 'normalized_commit_float', 'normalized_commit_mem',
+        'normalized_commit_int', 'l1_data_access', 'normalized_commit_ctrl',
+        'l2_avg_eviction_rate', 'l2_most_hit_rate', 'l3_usage', 'branch_mispred_rate'
+    ]
+    fieldnames = ['directory', 'period']
+    for m in METRICS + POWER_METRICS:
+        fieldnames.append(m + '_core0')
+        fieldnames.append(m + '_core1')
+    for metric in derived_metric_names:
+        fieldnames.append(metric + '_core0')
+        fieldnames.append(metric + '_core1')
 
-        for root, dirs, files in os.walk(base_dir):
-            total_dirs_walked += 1
+    csv_file = os.path.join(BASE_DIRS[1], benchmark_name + '_interval_metrics_all_combinations.csv')
 
-            current_dir = os.path.basename(root)
-            if benchmark_name not in current_dir.lower():
-                continue
-            dirs_matching_benchmark += 1
-            dirs_per_base[base_dir] += 1
+    # open once, write incrementally, flush after each row so a crash loses at most one row
+    csvfile = open(csv_file, 'w', newline='')
+    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+    writer.writeheader()
+    csvfile.flush()
 
-            if not ('sim.out' in files or 'stats.out' in files):
-                continue
-            dirs_with_stats_files += 1
-
-            print("=== Processing directory:", root)
-
-            proc = subprocess.Popen(
-                ['python', '/root/sniper/tools/dumpstats.py', '-l'],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                cwd=root)
-            out, err = proc.communicate()
-            if proc.returncode != 0:
-                print("Failed to list periods in {}: {}".format(root, err.decode('utf-8').strip()))
+    try:
+        for base_dir in BASE_DIRS:
+            if not os.path.isdir(base_dir):
+                print("[Warning] base dir does not exist, skipping:", base_dir)
                 continue
 
-            periods = get_period_markers(out.decode('utf-8'))
-            dirs_with_valid_periods += 1
+            for root, dirs, files in os.walk(base_dir):
+                total_dirs_walked += 1
 
-            try:
-                roi_begin_idx = periods.index('roi-begin')
-                roi_end_idx = periods.index('roi-end')
-            except ValueError:
-                print("ROI markers not found in {}, skipping.".format(root))
-                continue
-            dirs_with_roi_markers += 1
+                current_dir = os.path.basename(root)
+                if benchmark_name not in current_dir.lower():
+                    continue
+                dirs_matching_benchmark += 1
+                dirs_per_base[base_dir] += 1
 
-            interval_markers = periods[roi_begin_idx:roi_end_idx + 1]
+                if not ('sim.out' in files or 'stats.out' in files):
+                    continue
+                dirs_with_stats_files += 1
 
-            intervals_found_this_dir = 0
-            for i in range(len(interval_markers) - 1):
-                start_marker = interval_markers[i]
-                end_marker = interval_markers[i + 1]
+                print("=== Processing directory:", root)
 
-                print("  Processing interval: {} -> {}".format(start_marker, end_marker))
-
-                output_metrics = run_dumpstats(root, start_marker, end_marker, power=False)
-                if output_metrics is None:
-                    print("    [Warning] Failed to get metrics for interval, skipping.")
+                proc = subprocess.Popen(
+                    ['python', '/root/sniper/tools/dumpstats.py', '-l'],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    cwd=root)
+                out, err = proc.communicate()
+                if proc.returncode != 0:
+                    print("Failed to list periods in {}: {}".format(root, err.decode('utf-8').strip()))
                     continue
 
-                with open(os.path.join(root, 'dumpstats_{}_{}.out'.format(start_marker, end_marker)), 'w') as f:
-                    f.write(output_metrics)
+                periods = get_period_markers(out.decode('utf-8'))
+                dirs_with_valid_periods += 1
 
-                metrics_data = parse_metrics(output_metrics, METRICS)
-                derived_metrics = calculate_derived_metrics(metrics_data)
+                try:
+                    roi_begin_idx = periods.index('roi-begin')
+                    roi_end_idx = periods.index('roi-end')
+                except ValueError:
+                    print("ROI markers not found in {}, skipping.".format(root))
+                    continue
+                dirs_with_roi_markers += 1
 
-                combined_data = {}
-                combined_data.update(metrics_data)
-                combined_data.update(derived_metrics)
-                combined_data['directory'] = root
-                combined_data['period'] = '{}:{}'.format(start_marker, end_marker)
-                all_results.append(combined_data)
-                intervals_found_this_dir += 1
+                interval_markers = periods[roi_begin_idx:roi_end_idx + 1]
 
-            if intervals_found_this_dir > 0:
-                dirs_processed += 1
+                intervals_found_this_dir = 0
+                for i in range(len(interval_markers) - 1):
+                    start_marker = interval_markers[i]
+                    end_marker = interval_markers[i + 1]
+
+                    # removed per-interval print - this was firing thousands of times
+                    # and was almost certainly the main slowdown
+
+                    output_metrics = run_dumpstats(root, start_marker, end_marker, power=False)
+                    if output_metrics is None:
+                        print("    [Warning] Failed to get metrics for interval, skipping.")
+                        continue
+
+                    with open(os.path.join(root, 'dumpstats_{}_{}.out'.format(start_marker, end_marker)), 'w') as f:
+                        f.write(output_metrics)
+
+                    metrics_data = parse_metrics(output_metrics, METRICS)
+                    derived_metrics = calculate_derived_metrics(metrics_data)
+
+                    csv_row = {
+                        'directory': root,
+                        'period': '{}:{}'.format(start_marker, end_marker)
+                    }
+                    for metric in METRICS + POWER_METRICS:
+                        val0, val1 = metrics_data.get(metric, (0.0, 0.0))
+                        csv_row[metric + '_core0'] = val0
+                        csv_row[metric + '_core1'] = val1
+                    for metric in derived_metric_names:
+                        csv_row[metric + '_core0'] = derived_metrics.get(metric + '_core0', 0.0)
+                        csv_row[metric + '_core1'] = derived_metrics.get(metric + '_core1', 0.0)
+
+                    writer.writerow(csv_row)
+                    csvfile.flush()  # ensures the row is on disk immediately, not just buffered
+
+                    total_rows_written += 1
+                    intervals_found_this_dir += 1
+
+                if intervals_found_this_dir > 0:
+                    dirs_processed += 1
+    finally:
+        csvfile.close()
 
     # --- summary ---
     print("\n=== Directory funnel summary ===")
@@ -244,38 +280,8 @@ def main():
     print("With listable periods:            ", dirs_with_valid_periods)
     print("With roi-begin/roi-end markers:   ", dirs_with_roi_markers)
     print("Actually contributed rows:        ", dirs_processed)
-    print("Total result rows collected:      ", len(all_results))
-
-    csv_file = os.path.join(BASE_DIRS[1], benchmark_name+'_interval_metrics_all_combinations.csv')
-    with open(csv_file, 'w') as csvfile:
-        fieldnames = ['directory', 'period']
-        for m in METRICS + POWER_METRICS:
-            fieldnames.append(m + '_core0')
-            fieldnames.append(m + '_core1')
-        derived_metric_names = [
-            'l2_most_usage', 'normalized_commit_float', 'normalized_commit_mem',
-            'normalized_commit_int', 'l1_data_access', 'normalized_commit_ctrl',
-            'l2_avg_eviction_rate', 'l2_most_hit_rate', 'l3_usage', 'branch_mispred_rate'
-        ]
-        for metric in derived_metric_names:
-            fieldnames.append(metric + '_core0')
-            fieldnames.append(metric + '_core1')
-
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writeheader()
-
-        for row in all_results:
-            csv_row = {'directory': row['directory'], 'period': row['period']}
-            for metric in METRICS + POWER_METRICS:
-                val0, val1 = row.get(metric, (0.0, 0.0))
-                csv_row[metric + '_core0'] = val0
-                csv_row[metric + '_core1'] = val1
-            for metric in derived_metric_names:
-                csv_row[metric + '_core0'] = row.get(metric + '_core0', 0.0)
-                csv_row[metric + '_core1'] = row.get(metric + '_core1', 0.0)
-            writer.writerow(csv_row)
-
+    print("Total result rows collected:      ", total_rows_written)
     print("\nAll data written to", csv_file)
-    
+
 if __name__ == '__main__':
     main()
