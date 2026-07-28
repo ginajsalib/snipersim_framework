@@ -12,8 +12,7 @@ def collect_directories(base_dirs):
 
     dirs = []
     pattern = re.compile(
-        r'config_l2_(\d+)(?:_(\d+))?_l3MB_(\d+)_prefetch_(none|simple)(?:_(none|simple))?_branch_(\d+)-(\d+)_barnes-intervals$'
-    )
+    r'config_l2_(\d+)(?:_(\d+))?_l3MB_(\d+)_prefetch_(none|simple)(?:[-_](none|simple))?_branch_(\d+)-(\d+)_barnes-intervals$')
     for base_dir in base_dirs:
         if not os.path.isdir(base_dir):
             print("[Warning] base dir does not exist, skipping:", base_dir)
