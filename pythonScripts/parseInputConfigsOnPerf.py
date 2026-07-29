@@ -108,7 +108,9 @@ if __name__ == "__main__":
         parse_benchmark_data(input_file, output_file)
     else:
         print("Usage: python script.py <input_file.csv> [output_file.csv]")
-        print("Example: python script.py benchmark_perf_new.csv")        prefetch_match = re.search(r'prefetch_([^_]+)', raw_string)
+        print("Example: python script.py benchmark_perf_new.csv")        
+
+        prefetch_match = re.search(r'prefetch_([^_]+)', raw_string)
         branch_match = re.search(r'branch_(\d+)', raw_string)
         branch_match2 = re.search(r'branch_\d+-(\d+)', raw_string)
         
