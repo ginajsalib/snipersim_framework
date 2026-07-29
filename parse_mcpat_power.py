@@ -46,8 +46,11 @@ def extract_subsection(text, header):
 # 'periodicins-101000026'), so a generic dash-split can't tell where one
 # marker ends and the next begins.
 _PERIOD_MARKER = r'(?:roi-begin|roi-end|periodicins-\d+)'
+# Trailing suffix is '-<number>', where <number> can itself be negative
+# (e.g. 'roi-end--717006656.txt' = separator dash + a negative number's
+# own minus sign). The inner group allows an optional extra '-' for that.
 _POWER_FILENAME_PATTERN = re.compile(
-    r'^power-(' + _PERIOD_MARKER + r')-(' + _PERIOD_MARKER + r')(?:-\d+)?\.txt$'
+    r'^power-(' + _PERIOD_MARKER + r')-(' + _PERIOD_MARKER + r')(?:-(-?\d+))?\.txt$'
 )
 
 
