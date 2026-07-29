@@ -106,7 +106,9 @@ if __name__ == "__main__":
         output_csv = sys.argv[3]
         merge_train_with_top3(train_csv, top3_csv, output_csv)
     else:
-        print("Usage: python script.py <train_file.csv> <top3_file.csv> <output_file.csv>")        raise ValueError("Missing 'period_start' column in training data.")
+        print("Usage: python script.py <train_file.csv> <top3_file.csv> <output_file.csv>")        
+
+        raise ValueError("Missing 'period_start' column in training data.")
     if "period_start" not in top3_df.columns:
         raise ValueError("Missing 'period_start' column in Top3ConfigsPPW data.")
 
