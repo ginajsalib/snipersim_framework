@@ -62,15 +62,19 @@ def merge_train_with_top3(train_csv="Training_Data_Complete.csv", top3_csv="Top3
             f"Was this file generated with the updated find_top3_configs_by_ppw script?"
         )
 
-    # Create empty columns in train_df
+    # Create empty columns in train_df using None (object dtype), NOT np.nan
+    # (float64) - top3_cols is a mix of numeric (L2/L3/BTB/PPW/Diff) and
+    # string (Prefetchcore0/1) values. Initializing with np.nan forces
+    # float64 dtype, which then raises a dtype-incompatibility warning/error
+    # the moment a string like 'simple' gets written into that column later.
     for col in top3_cols:
-        train_df[col] = np.nan
+        train_df[col] = None
 
     # Perform fuzzy matching
     unmatched = []
     for idx, row in train_df.iterrows():
         period = row["norm_period"]
-        if np.isnan(period):
+        if pd.isna(period):
             unmatched.append(period)
             continue
         # Compute absolute differences
@@ -106,67 +110,4 @@ if __name__ == "__main__":
         output_csv = sys.argv[3]
         merge_train_with_top3(train_csv, top3_csv, output_csv)
     else:
-        print("Usage: python script.py <train_file.csv> <top3_file.csv> <output_file.csv>")        raise ValueError("Missing 'period_start' column in training data.")
-    if "period_start" not in top3_df.columns:
-        raise ValueError("Missing 'period_start' column in Top3ConfigsPPW data.")
-
-    # Normalize periods
-    train_df["norm_period"] = train_df["period_start"].apply(normalize_period_value)
-    top3_df["norm_period"] = top3_df["period_start"].apply(normalize_period_value)
-
-    # Prepare output columns
-    top3_cols = [
-        "btbCore0_best", "btbCore1_best", "PPW_best",
-        "btbCore0_2nd", "btbCore1_2nd", "PPW_2nd", "Diff_best_2nd",
-        "btbCore0_3rd", "btbCore1_3rd", "PPW_3rd", "Diff_best_3rd"
-    ]
-
-    # Create empty columns in train_df
-    for col in top3_cols:
-        train_df[col] = np.nan
-
-    # Perform fuzzy matching
-    unmatched = []
-    for idx, row in train_df.iterrows():
-        period = row["norm_period"]
-        if np.isnan(period):
-            unmatched.append(period)
-            continue
-
-        # Compute absolute differences
-        top3_df["diff"] = abs(top3_df["norm_period"] - period)
-
-        # Dynamic tolerance (like in Apps Script)
-        tolerance = max(1000, abs(period) * 0.1)
-
-        # Find best match within tolerance
-        match_row = top3_df[top3_df["diff"] <= tolerance].sort_values("diff").head(1)
-
-        if not match_row.empty:
-            # Assign matched values
-            for col in top3_cols:
-                train_df.at[idx, col] = match_row.iloc[0][col]
-        else:
-            unmatched.append(period)
-
-    # Drop helper columns
-    train_df.drop(columns=["norm_period"], inplace=True, errors="ignore")
-
-    # Save merged result
-    train_df.to_csv(output_csv, index=False)
-    print(f" Merge completed! Saved to {output_csv}")
-    print(f"Matched rows: {len(train_df) - len(unmatched)}")
-    print(f"Unmatched rows: {len(unmatched)}")
-
-    if unmatched:
-        print(f" No Top3 match found for periods (showing up to 10): {unmatched[:10]}")
-
-
-# Example usage
-if __name__ == "__main__":
-    import sys
-    if len(sys.argv) >= 3:
-        train_csv = sys.argv[1] 
-        top3_csv = sys.argv[2]
-        output_csv = sys.argv[3]
-    merge_train_with_top3(train_csv, top3_csv, output_csv)
+        print("Usage: python script.py <train_file.csv> <top3_file.csv> <output_file.csv>")
