@@ -138,7 +138,7 @@ if __name__ == "__main__":
         print("  - ips: (instructions_core0 + instructions_core1) / time_seconds")
         print("  - ips_cubed: ips^3")
         print("  - ppw: ips^3 / total_power")
-        print("  - config: L2core0_L2core1_L3_PrefetchCore0_PrefetchCore1_BTBcore0_BTBcore1")    }
+        print("  - config: L2core0_L2core1_L3_PrefetchCore0_PrefetchCore1_BTBcore0_BTBcore1")    
     
     # Find actual column names (case-insensitive matching)
     col_mapping = {}
