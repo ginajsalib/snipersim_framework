@@ -40,16 +40,42 @@ def extract_subsection(text, header):
     return text[idx:] if idx != -1 else ''
 
 
+# Each period marker is one of: 'roi-begin', 'roi-end', or 'periodicins-<digits>'.
+# Matching these as atomic tokens (rather than naively splitting on '-') is
+# essential because the markers themselves contain dashes (e.g.
+# 'periodicins-101000026'), so a generic dash-split can't tell where one
+# marker ends and the next begins.
+_PERIOD_MARKER = r'(?:roi-begin|roi-end|periodicins-\d+)'
+_POWER_FILENAME_PATTERN = re.compile(
+    r'^power-(' + _PERIOD_MARKER + r')-(' + _PERIOD_MARKER + r')(?:-\d+)?\.txt$'
+)
+
+
+def parse_power_filename(filename):
+    """
+    Parse 'power-<start_marker>-<end_marker>[-<trailing_number>].txt' into
+    (period_start, period_end). Each marker is 'roi-begin', 'roi-end', or
+    'periodicins-<digits>'. The optional trailing '-<number>' (seen in some
+    filenames, e.g. an instruction-count/duration suffix) is matched but
+    discarded, not folded into period_end.
+
+    Returns ('', '') and prints a warning if the filename doesn't match the
+    expected pattern, instead of silently returning garbled fragments.
+    """
+    m = _POWER_FILENAME_PATTERN.match(filename)
+    if m:
+        return m.group(1), m.group(2)
+    print(f"[Warning] Could not parse period markers from filename: {filename}")
+    return '', ''
+
+
 def parse_power_file(filepath):
     with open(filepath, 'r') as f:
         content = f.read()
 
     filename = os.path.basename(filepath)
 
-    # Filename format: power-<start_marker>-<end_marker>.txt
-    period_match = re.match(r'power-(\S+?)-(\S+?)\.txt$', filename)
-    period_start = period_match.group(1) if period_match else ''
-    period_end   = period_match.group(2) if period_match else ''
+    period_start, period_end = parse_power_filename(filename)
 
     result = {
         'file':         filename,
