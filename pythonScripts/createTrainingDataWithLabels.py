@@ -18,7 +18,6 @@ def normalize_period_value(val):
     except Exception:
         return -1
 
-
 def merge_best_config_with_training_data(
     training_csv: str,
     best_config_csv: str,
@@ -48,12 +47,16 @@ def merge_best_config_with_training_data(
         best_col_name = "best-config"
     elif "best_config" in best_df.columns:
         best_col_name = "best_config"
+    elif "config" in best_df.columns:
+        best_col_name = "config"
     else:
         # fallback to any config-like column if no explicit one
         candidates = [c for c in best_df.columns if "config" in c.lower()]
         if not candidates:
             raise ValueError("No best-config column found in best config CSV.")
         best_col_name = candidates[0]
+
+    print(f"Using '{best_col_name}' as the best-config column from {best_config_csv}")
 
     # --- Normalize numeric period values ---
     best_df["interval_start_num"] = best_df["interval_start"].apply(normalize_period_value)
@@ -71,6 +74,7 @@ def merge_best_config_with_training_data(
     for _, row in training_df.iterrows():
         t_start = row["period_start_num"]
         t_end = row["period_end_num"]
+
         best_config_val = None
 
         # Find matching best config (within tolerance)
@@ -100,17 +104,18 @@ def merge_best_config_with_training_data(
     print(f" {unmatched} rows without best config")
     print(f"Output saved to: {output_csv}")
 
-
 # Example usage
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) >= 3:
-        training_csv = sys.argv[1] 
+    if len(sys.argv) >= 4:
+        training_csv = sys.argv[1]
         best_config_csv = sys.argv[2]
         output_csv = sys.argv[3]
-    merge_best_config_with_training_data(
-        training_csv,
-        best_config_csv,
-        output_csv,
-        tolerance=100
-    )
+        merge_best_config_with_training_data(
+            training_csv,
+            best_config_csv,
+            output_csv,
+            tolerance=100
+        )
+    else:
+        print("Usage: python script.py <training_data.csv> <best_config.csv> <output.csv>")
