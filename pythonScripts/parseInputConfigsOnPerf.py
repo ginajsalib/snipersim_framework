@@ -99,36 +99,6 @@ def parse_benchmark_data(input_file, output_file=None):
 
     return df
 
-if __name__ == "__main__":
-    import sys
-
-    if len(sys.argv) > 1:
-        input_file = sys.argv[1]
-        output_file = sys.argv[2] if len(sys.argv) > 2 else None
-        parse_benchmark_data(input_file, output_file)
-    else:
-        print("Usage: python script.py <input_file.csv> [output_file.csv]")
-        print("Example: python script.py benchmark_perf_new.csv")        
-
-        prefetch_match = re.search(r'prefetch_([^_]+)', raw_string)
-        branch_match = re.search(r'branch_(\d+)', raw_string)
-        branch_match2 = re.search(r'branch_\d+-(\d+)', raw_string)
-        
-        # Set values (convert to appropriate types)
-        df.at[idx, 'L2'] = float(l2_match.group(1)) if l2_match else None
-        df.at[idx, 'L3'] = float(l3_match.group(1)) if l3_match else None
-        df.at[idx, 'Prefetch'] = prefetch_match.group(1) if prefetch_match else None
-        df.at[idx, 'BTB core 0'] = float(branch_match.group(1)) if branch_match else None
-        df.at[idx, 'BTB core 1'] = float(branch_match2.group(1)) if branch_match2 else None
-    
-    # Save the file
-    output_file = output_file or input_file
-    df.to_csv(output_file, index=False)
-    
-    print(f"Successfully processed {len(df)} rows")
-    print(f"Output saved to: {output_file}")
-    
-    return df
 
 if __name__ == "__main__":
     # Example usage:
