@@ -42,36 +42,51 @@ def _normalize_name(s):
     return s.lower().replace('_', '').replace(' ', '').replace('.', '')
 
 
-def find_col(df, expected_name):
-    """Find a column matching expected_name, ignoring case/separators."""
+def find_col(df, expected_name, exclude_substr=None):
+    """
+    Find a column matching expected_name, ignoring case/separators.
+    If exclude_substr is given, any column whose normalized name contains it
+    is skipped entirely (e.g. exclude_substr='prev' when resolving a
+    CURRENT-config column, so a substring-fallback match never accidentally
+    lands on that dimension's "_prev" column instead).
+    """
     norm = _normalize_name
+    excl = norm(exclude_substr) if exclude_substr else None
+
+    def ok(col):
+        return excl is None or excl not in norm(col)
+
     for col in df.columns:
-        if norm(col) == norm(expected_name):
+        if norm(col) == norm(expected_name) and ok(col):
             return col
     for col in df.columns:
-        if norm(expected_name) in norm(col):
+        if norm(expected_name) in norm(col) and ok(col):
             return col
     return None
 
 
-def resolve_first_present(df, candidates):
+def resolve_first_present(df, candidates, exclude_substr=None):
     for c in candidates:
-        found = find_col(df, c)
+        found = find_col(df, c, exclude_substr=exclude_substr)
         if found:
             return found
     return None
 
 
 # Candidates for the model's CHOSEN/predicted config for the current interval.
-# Covers both predict_config.py's output naming and raw training-CSV naming.
+# Covers predict_config.py's output naming (no rank suffix) AND raw
+# training-CSV naming (the "_best" rank column, since raw data has best/2nd/3rd
+# but no bare unranked column). "_prev" columns are explicitly excluded during
+# resolution (see resolve_reconfig_columns) so this can never collide with the
+# per-core "_prev" columns below, even via the substring fallback.
 CURRENT_DIMENSIONS = {
-    'l2_core0':       ['L2core0', 'l2_core0', 'L2 core 0', 'l2Core0'],
-    'l2_core1':       ['L2core1', 'l2_core1', 'L2 core 1', 'l2Core1'],
-    'l3':             ['L3', 'l3', 'l3Size'],
-    'btb_core0':      ['btbCore0', 'btb_core0', 'BTB core 0', 'BTBcore0'],
-    'btb_core1':      ['btbCore1', 'btb_core1', 'BTB core 1', 'BTBcore1'],
-    'prefetch_core0': ['prefetch_core0', 'prefetcher_core0', 'Prefetch core 0', 'Prefetchcore0'],
-    'prefetch_core1': ['prefetch_core1', 'prefetcher_core1', 'Prefetch core 1', 'Prefetchcore1'],
+    'l2_core0':       ['L2core0_best', 'L2 core 0_best', 'l2_core0_best', 'l2Core0_best', 'L2core0', 'l2_core0'],
+    'l2_core1':       ['L2core1_best', 'L2 core 1_best', 'l2_core1_best', 'l2Core1_best', 'L2core1', 'l2_core1'],
+    'l3':             ['L3_best', 'l3_best', 'l3Size_best', 'L3', 'l3'],
+    'btb_core0':      ['BTBcore0_best', 'BTB core 0_best', 'btb_core0_best', 'btbCore0_best', 'btbCore0', 'btb_core0'],
+    'btb_core1':      ['BTBcore1_best', 'BTB core 1_best', 'btb_core1_best', 'btbCore1_best', 'btbCore1', 'btb_core1'],
+    'prefetch_core0': ['Prefetchcore0_best', 'Prefetch core 0_best', 'prefetch_core0_best', 'prefetcher_core0_best', 'prefetch_core0', 'prefetcher_core0'],
+    'prefetch_core1': ['Prefetchcore1_best', 'Prefetch core 1_best', 'prefetch_core1_best', 'prefetcher_core1_best', 'prefetch_core1', 'prefetcher_core1'],
 }
 
 # Candidates for the split per-core "_prev" columns -- the actual config that
@@ -164,8 +179,14 @@ def resolve_reconfig_columns(df):
     Resolve both the current-chosen-config columns and the split per-core
     "_prev" columns. Returns (curr_col_map, prev_col_map), each
     {dimension_key: actual_column_name_or_None}.
+
+    Current-config resolution explicitly excludes any column containing
+    "prev" so it can never collide with the previous-config columns (even
+    via find_col's substring fallback) -- this was the root cause of a prior
+    bug where both maps resolved to the same "_prev" columns, silently
+    zeroing out every reconfiguration-change detection.
     """
-    curr_map = {key: resolve_first_present(df, cands)
+    curr_map = {key: resolve_first_present(df, cands, exclude_substr='prev')
                 for key, cands in CURRENT_DIMENSIONS.items()}
     prev_map = {key: resolve_first_present(df, cands)
                 for key, cands in PREV_DIMENSIONS.items()}
@@ -469,20 +490,42 @@ def run_cost_analysis(benchmark, model_dir, output_csv, input_csv=None):
     print('='*70)
 
     if ppw_best_col is not None:
-        interval_inst = 500000  # 500K instructions per interval
+        # Guard against inf/-inf in the raw data (e.g. a divide-by-zero
+        # upstream in the PPW calculation for some period) so a single bad
+        # row can't silently poison every downstream mean into inf/nan.
+        n_bad_ppw = int((~np.isfinite(df[ppw_best_col])).sum())
+        if n_bad_ppw > 0:
+            print(f"  [WARN] {n_bad_ppw:,} row(s) have non-finite {ppw_best_col} "
+                  f"(inf/-inf/NaN) -- excluding from PPW statistics.")
+            df[ppw_best_col] = df[ppw_best_col].replace([np.inf, -np.inf], np.nan)
+
         if ips_prev_col is not None:
-            interval_time = interval_inst / df[ips_prev_col].mean()
+            ips_clean = df[ips_prev_col].replace([np.inf, -np.inf], np.nan)
+            n_bad_ips = int((~np.isfinite(df[ips_prev_col])).sum())
+            if n_bad_ips > 0:
+                print(f"  [WARN] {n_bad_ips:,} row(s) have non-finite {ips_prev_col} "
+                      f"-- excluded from the IPS average used for interval_time.")
+            ips_mean = ips_clean.mean()
+            interval_inst = 500000  # 500K instructions per interval
+            if not ips_mean or np.isnan(ips_mean):
+                print("  [WARN] ips_prev average is 0/NaN -- falling back to a "
+                      "fixed 1e9 IPS assumption for interval_time.")
+                interval_time = 500000 / 1e9
+            else:
+                interval_time = interval_inst / ips_mean
         else:
-            interval_time = interval_inst / 1e9
+            interval_time = 500000 / 1e9
             print("  [WARN] No ips_prev column found -- using a fixed 1e9 IPS "
                   "assumption for interval_time.")
 
         overhead_pJ = df['inference_energy_pJ'] + df['reconfig_energy_pJ']
         df['net_ppw'] = df[ppw_best_col] - overhead_pJ / interval_time
+        df['net_ppw'] = df['net_ppw'].replace([np.inf, -np.inf], np.nan)
 
-        raw_ppw_mean = df[ppw_best_col].mean()
+        raw_ppw_mean = df[ppw_best_col].mean()  # NaN-skipping by default
         net_ppw_mean = df['net_ppw'].mean()
-        overhead_pct = (raw_ppw_mean - net_ppw_mean) / raw_ppw_mean * 100 if raw_ppw_mean else np.nan
+        overhead_pct = ((raw_ppw_mean - net_ppw_mean) / raw_ppw_mean * 100
+                        if raw_ppw_mean and not np.isnan(raw_ppw_mean) else np.nan)
 
         print(f"\n  Raw PPW (best config, avg):  {raw_ppw_mean:.4e}")
         print(f"  Net PPW (after overhead, avg): {net_ppw_mean:.4e}")
@@ -492,7 +535,11 @@ def run_cost_analysis(benchmark, model_dir, output_csv, input_csv=None):
         # How much better (or worse) off are you, after paying inference +
         # reconfig overhead, versus simply staying on the previous config?
         if ppw_prev_col is not None:
-            baseline = df[ppw_prev_col]
+            n_bad_prev = int((~np.isfinite(df[ppw_prev_col])).sum())
+            if n_bad_prev > 0:
+                print(f"  [WARN] {n_bad_prev:,} row(s) have non-finite {ppw_prev_col} "
+                      f"-- excluded from Net PPW Gain % baseline.")
+            baseline = df[ppw_prev_col].replace([np.inf, -np.inf], np.nan)
             gain_source = f"'{ppw_prev_col}' column (actual previous-config PPW)"
         else:
             # Fallback: approximate the "stayed on previous config" baseline
