@@ -1,8 +1,20 @@
 """
-costAnalysis.py
+costAnalysis.py  (7-way)
 ===============
 Calculate RF model inference cost and reconfiguration cost for post-silicon
-customization using clock gating (McPAT/Gainestown parameters).
+customization using clock gating (McPAT/Gainestown parameters), for the
+7-way model (L2 core0/1, L3, BTB core0/1, Prefetcher core0/1).
+
+Reconfiguration cost is now computed per-row against that row's own actual
+previous-interval config (the split per-core "_prev" columns), rather than by
+diffing consecutive rows in the sorted dataframe -- this reflects what's
+really "currently running" before the model's new prediction takes effect,
+and works whether the input comes straight from predict_config.py's output
+or from a raw training-style CSV with the older "_prev" naming.
+
+Also reports a Net PPW Gain % -- how much PPW you actually keep (or lose) by
+switching to the model's chosen config and paying inference + reconfig
+overhead, versus just staying on the previous config.
 
 Based on: Weston, K., et al. (2023). Post-Silicon Customization Using Deep
 Neural Networks. ARCS.
@@ -20,6 +32,65 @@ import pandas as pd
 import numpy as np
 import joblib
 from datetime import datetime
+
+# ==============================================================================
+# COLUMN NAME RESOLUTION HELPERS  (matches rf_7way_config_predictor.py /
+# post_hoc_analysis.py / predict_config.py)
+# ==============================================================================
+
+def _normalize_name(s):
+    return s.lower().replace('_', '').replace(' ', '').replace('.', '')
+
+
+def find_col(df, expected_name):
+    """Find a column matching expected_name, ignoring case/separators."""
+    norm = _normalize_name
+    for col in df.columns:
+        if norm(col) == norm(expected_name):
+            return col
+    for col in df.columns:
+        if norm(expected_name) in norm(col):
+            return col
+    return None
+
+
+def resolve_first_present(df, candidates):
+    for c in candidates:
+        found = find_col(df, c)
+        if found:
+            return found
+    return None
+
+
+# Candidates for the model's CHOSEN/predicted config for the current interval.
+# Covers both predict_config.py's output naming and raw training-CSV naming.
+CURRENT_DIMENSIONS = {
+    'l2_core0':       ['L2core0', 'l2_core0', 'L2 core 0', 'l2Core0'],
+    'l2_core1':       ['L2core1', 'l2_core1', 'L2 core 1', 'l2Core1'],
+    'l3':             ['L3', 'l3', 'l3Size'],
+    'btb_core0':      ['btbCore0', 'btb_core0', 'BTB core 0', 'BTBcore0'],
+    'btb_core1':      ['btbCore1', 'btb_core1', 'BTB core 1', 'BTBcore1'],
+    'prefetch_core0': ['prefetch_core0', 'prefetcher_core0', 'Prefetch core 0', 'Prefetchcore0'],
+    'prefetch_core1': ['prefetch_core1', 'prefetcher_core1', 'Prefetch core 1', 'Prefetchcore1'],
+}
+
+# Candidates for the split per-core "_prev" columns -- the actual config that
+# was running immediately before this interval. predict_config.py's own
+# passthrough naming ('l2_core0_prev', etc.) is tried first.
+PREV_DIMENSIONS = {
+    'l2_core0':       ['l2_core0_prev', 'L2 core 0_prev', 'L2core0_prev', 'l2Core0_prev'],
+    'l2_core1':       ['l2_core1_prev', 'L2 core 1_prev', 'L2core1_prev', 'l2Core1_prev'],
+    'l3':             ['l3_prev', 'L3_prev', 'l3Size_prev'],
+    'btb_core0':      ['btb_core0_prev', 'BTB core 0_prev', 'BTBcore0_prev', 'btbCore0_prev'],
+    'btb_core1':      ['btb_core1_prev', 'BTB core 1_prev', 'BTBcore1_prev', 'btbCore1_prev'],
+    'prefetch_core0': ['prefetch_core0_prev', 'Prefetch core 0_prev', 'prefetcher_core0_prev', 'Prefetch_core0_prev'],
+    'prefetch_core1': ['prefetch_core1_prev', 'Prefetch core 1_prev', 'prefetcher_core1_prev', 'Prefetch_core1_prev'],
+}
+
+PPW_BEST_CANDIDATES = ['PPW_best', 'PPW__best', 'ppw_best']
+PPW_PREV_CANDIDATES = ['ppw_prev', 'PPW_prev', 'PPW__prev']
+IPS_PREV_CANDIDATES = ['ips_prev']
+
 
 # ==============================================================================
 # GAINESTOWN/McPAT TECHNOLOGY PARAMETERS (from power.xml)
@@ -46,7 +117,7 @@ TECH_PARAMS = {
     'E_gate_per_btb_entry_pJ': 0.05,     # Clock gating per BTB entry
     'E_gate_per_l2_kb_pJ': 2.5,          # Clock gating per KB of L2
     'E_gate_per_l3_kb_pJ': 1.8,          # Clock gating per KB of L3
-    'E_gate_per_prefetcher_pJ': 15.0,    # Prefetcher state machine gating
+    'E_gate_per_prefetcher_pJ': 15.0,    # Prefetcher state machine gating (per core)
 
     # RF inference energy (per operation)
     'E_rf_inst_pJ': 0.5,                 # Instruction fetch
@@ -78,93 +149,139 @@ def print_tech_params():
     print(f"    E_gate_per_btb_entry:   {TECH_PARAMS['E_gate_per_btb_entry_pJ']:.3f} pJ")
     print(f"    E_gate_per_l2_kb:       {TECH_PARAMS['E_gate_per_l2_kb_pJ']:.3f} pJ")
     print(f"    E_gate_per_l3_kb:       {TECH_PARAMS['E_gate_per_l3_kb_pJ']:.3f} pJ")
-    print(f"    E_gate_per_prefetcher:  {TECH_PARAMS['E_gate_per_prefetcher_pJ']:.3f} pJ")
+    print(f"    E_gate_per_prefetcher:  {TECH_PARAMS['E_gate_per_prefetcher_pJ']:.3f} pJ  (per core)")
     print(f"    E_rf_inst (inference):  {TECH_PARAMS['E_rf_inst_pJ']:.3f} pJ")
     print(f"    E_rf_cmp (tree node):   {TECH_PARAMS['E_rf_cmp_pJ']:.3f} pJ")
     print(f"    E_rf_mem (SRAM access): {TECH_PARAMS['E_rf_mem_pJ']:.3f} pJ")
 
 
-def calc_reconfig_energy(row, prev_row, tech_params):
+# ==============================================================================
+# Reconfiguration energy — vectorised, per-row vs that row's own "_prev" cols
+# ==============================================================================
+
+def resolve_reconfig_columns(df):
     """
-    Calculate reconfiguration energy for one interval.
-
-    Args:
-        row: Current row with config columns
-        prev_row: Previous row with config columns
-        tech_params: Technology parameters dict
-
-    Returns:
-        (total_energy_pJ, breakdown_dict, changed_components)
+    Resolve both the current-chosen-config columns and the split per-core
+    "_prev" columns. Returns (curr_col_map, prev_col_map), each
+    {dimension_key: actual_column_name_or_None}.
     """
-    energy = 0.0
-    breakdown = {}
-    changed = []
+    curr_map = {key: resolve_first_present(df, cands)
+                for key, cands in CURRENT_DIMENSIONS.items()}
+    prev_map = {key: resolve_first_present(df, cands)
+                for key, cands in PREV_DIMENSIONS.items()}
+    return curr_map, prev_map
 
-    # BTB core0 change
-    if pd.notna(row.get('btbCore0')) and pd.notna(prev_row.get('btbCore0')):
-        if row['btbCore0'] != prev_row['btbCore0']:
-            # Energy proportional to BTB size difference
-            btb_diff = abs(int(row['btbCore0']) - int(prev_row['btbCore0']))
-            e_btb0 = tech_params['E_gate_per_btb_entry_pJ'] * btb_diff
-            energy += e_btb0
-            breakdown['btbCore0'] = e_btb0
-            changed.append('btbCore0')
 
-    # BTB core1 change
-    if pd.notna(row.get('btbCore1')) and pd.notna(prev_row.get('btbCore1')):
-        if row['btbCore1'] != prev_row['btbCore1']:
-            btb_diff = abs(int(row['btbCore1']) - int(prev_row['btbCore1']))
-            e_btb1 = tech_params['E_gate_per_btb_entry_pJ'] * btb_diff
-            energy += e_btb1
-            breakdown['btbCore1'] = e_btb1
-            changed.append('btbCore1')
+def calc_reconfig_energy_vectorized(df, curr_map, prev_map, tech_params):
+    """
+    Vectorised reconfiguration-energy calculation: for every row, compare the
+    model's chosen config for that interval against that row's own actual
+    previous-interval config (the split per-core "_prev" columns) -- NOT the
+    previous row in the sorted dataframe.
 
-    # L2 change
-    if pd.notna(row.get('L2')) and pd.notna(prev_row.get('L2')):
-        if row['L2'] != prev_row['L2']:
-            l2_diff = abs(int(row['L2']) - int(prev_row['L2']))
-            e_l2 = tech_params['E_gate_per_l2_kb_pJ'] * l2_diff
-            energy += e_l2
-            breakdown['L2'] = e_l2
-            changed.append('L2')
+    Returns a dict of numpy arrays (one entry per row of df):
+      reconfig_energy_pJ, config_changed, l2_changed, l3_changed,
+      btb_changed, prefetcher_changed, has_prev_data
+    """
+    n = len(df)
+    energy   = np.zeros(n)
+    l2_changed  = np.zeros(n, dtype=bool)
+    l3_changed  = np.zeros(n, dtype=bool)
+    btb_changed = np.zeros(n, dtype=bool)
+    pf_changed  = np.zeros(n, dtype=bool)
+    has_prev    = np.ones(n, dtype=bool)
 
-    # L3 change
-    if pd.notna(row.get('L3')) and pd.notna(prev_row.get('L3')):
-        if row['L3'] != prev_row['L3']:
-            l3_diff = abs(int(row['L3']) - int(prev_row['L3']))
-            e_l3 = tech_params['E_gate_per_l3_kb_pJ'] * l3_diff
-            energy += e_l3
-            breakdown['L3'] = e_l3
-            changed.append('L3')
+    def numeric(col):
+        return pd.to_numeric(df[col], errors='coerce').values.astype(float) if col else None
 
-    # Prefetcher change (discrete: none→simple→ghb)
-    if pd.notna(row.get('prefetcher')) and pd.notna(prev_row.get('prefetcher')):
-        if row['prefetcher'] != prev_row['prefetcher']:
-            e_pref = tech_params['E_gate_per_prefetcher_pJ']
-            energy += e_pref
-            breakdown['prefetcher'] = e_pref
-            changed.append('prefetcher')
+    def categorical(col):
+        return df[col].astype(str).str.strip().str.lower().values if col else None
 
-    return energy, breakdown, changed
+    # --- L2 (core0 + core1) ---
+    for core in ['l2_core0', 'l2_core1']:
+        c_col, p_col = curr_map.get(core), prev_map.get(core)
+        if c_col is None or p_col is None:
+            has_prev &= False if p_col is None else has_prev
+            continue
+        curr_v, prev_v = numeric(c_col), numeric(p_col)
+        valid = ~np.isnan(curr_v) & ~np.isnan(prev_v)
+        diff  = np.where(valid, np.abs(curr_v - prev_v), 0.0)
+        changed_here = valid & (diff > 0)
+        energy += np.where(changed_here, tech_params['E_gate_per_l2_kb_pJ'] * diff, 0.0)
+        l2_changed |= changed_here
+
+    # --- L3 (single) ---
+    c_col, p_col = curr_map.get('l3'), prev_map.get('l3')
+    if c_col is not None and p_col is not None:
+        curr_v, prev_v = numeric(c_col), numeric(p_col)
+        valid = ~np.isnan(curr_v) & ~np.isnan(prev_v)
+        diff  = np.where(valid, np.abs(curr_v - prev_v), 0.0)
+        changed_here = valid & (diff > 0)
+        energy += np.where(changed_here, tech_params['E_gate_per_l3_kb_pJ'] * diff, 0.0)
+        l3_changed |= changed_here
+    else:
+        has_prev &= False if p_col is None else has_prev
+
+    # --- BTB (core0 + core1) ---
+    for core in ['btb_core0', 'btb_core1']:
+        c_col, p_col = curr_map.get(core), prev_map.get(core)
+        if c_col is None or p_col is None:
+            has_prev &= False if p_col is None else has_prev
+            continue
+        curr_v, prev_v = numeric(c_col), numeric(p_col)
+        valid = ~np.isnan(curr_v) & ~np.isnan(prev_v)
+        diff  = np.where(valid, np.abs(curr_v - prev_v), 0.0)
+        changed_here = valid & (diff > 0)
+        energy += np.where(changed_here, tech_params['E_gate_per_btb_entry_pJ'] * diff, 0.0)
+        btb_changed |= changed_here
+
+    # --- Prefetcher (core0 + core1, discrete -- each changed core is its own
+    #     gating event, so both cores switching costs 2x one core switching) ---
+    for core in ['prefetch_core0', 'prefetch_core1']:
+        c_col, p_col = curr_map.get(core), prev_map.get(core)
+        if c_col is None or p_col is None:
+            has_prev &= False if p_col is None else has_prev
+            continue
+        curr_v, prev_v = categorical(c_col), categorical(p_col)
+        valid = (curr_v != 'nan') & (prev_v != 'nan')
+        changed_here = valid & (curr_v != prev_v)
+        energy += np.where(changed_here, tech_params['E_gate_per_prefetcher_pJ'], 0.0)
+        pf_changed |= changed_here
+
+    config_changed = l2_changed | l3_changed | btb_changed | pf_changed
+
+    return {
+        'reconfig_energy_pJ': energy,
+        'config_changed':     config_changed,
+        'l2_changed':         l2_changed,
+        'l3_changed':         l3_changed,
+        'btb_changed':        btb_changed,
+        'prefetcher_changed': pf_changed,
+        'has_prev_data':      has_prev,
+    }
 
 
 def calc_inference_energy(model, tech_params):
     """
-    Calculate RF model inference energy per prediction.
+    Calculate RF model inference energy per prediction, introspected from the
+    actual loaded model rather than hardcoded stand-ins.
 
     Args:
         model: Trained RandomForest model
         tech_params: Technology parameters dict
 
     Returns:
-        inference_energy_pJ
+        (inference_energy_pJ, breakdown_dict)
     """
-    #n_estimators = model.n_estimators
-    #max_depth = model.max_depth if model.max_depth else 15
-    #n_features = len(model.estimators_[0].feature_importances_)
-    n_estimators = 550
-    max_depth = 22
-    n_features = 130
+    n_estimators = model.n_estimators
+    max_depth = model.max_depth if model.max_depth else 25
+    if hasattr(model, 'n_features_in_'):
+        n_features = model.n_features_in_
+    elif hasattr(model, 'estimators_') and len(model.estimators_) > 0:
+        n_features = len(model.estimators_[0].feature_importances_)
+    else:
+        n_features = 130  # fallback if model internals aren't introspectable
+
     # Estimate operations per inference
     n_comparisons = n_estimators * max_depth  # Each tree traverses depth nodes
     n_mem_accesses = n_estimators * n_features  # Feature lookups
@@ -188,9 +305,14 @@ def calc_inference_energy(model, tech_params):
 
 
 def load_model(model_dir):
-    """Load the most recent RF model from directory."""
-    pkls = glob.glob(os.path.join(model_dir, 'rf_4way_config_predictor_*.pkl'))
-    pkls = [p for p in pkls if '_scaler' not in p and '_encoder' not in p]
+    """Load the most recent saved RF model from directory (7-way, falling
+    back to a legacy 4-way model if no 7-way model is found)."""
+    pkls = glob.glob(os.path.join(model_dir, 'rf_7way_config_predictor_*.pkl'))
+    prefix = 'rf_7way_config_predictor_'
+    if not pkls:
+        pkls = glob.glob(os.path.join(model_dir, 'rf_4way_config_predictor_*.pkl'))
+        prefix = 'rf_4way_config_predictor_'
+    pkls = [p for p in pkls if '_scaler' not in p and '_encoder' not in p and '_imputer' not in p]
 
     if not pkls:
         raise FileNotFoundError(f"No model files found in {model_dir}")
@@ -199,7 +321,7 @@ def load_model(model_dir):
     latest = pkls[-1]
     model = joblib.load(latest)
 
-    ts = os.path.basename(latest).replace('rf_4way_config_predictor_', '').replace('.pkl', '')
+    ts = os.path.basename(latest).replace(prefix, '').replace('.pkl', '')
     return model, ts, latest
 
 
@@ -250,8 +372,8 @@ def run_cost_analysis(benchmark, model_dir, output_csv, input_csv=None):
     model, ts, model_path = load_model(model_dir)
     print(f"  Model timestamp: {ts}")
     print(f"  Model path: {model_path}")
-   # print(f"  n_estimators: {model.n_estimators}")
-   # print(f"  max_depth: {model.max_depth}")
+    print(f"  n_estimators: {model.n_estimators}")
+    print(f"  max_depth: {model.max_depth}")
 
     # Load config data
     print(f"\n{'='*70}")
@@ -264,6 +386,19 @@ def run_cost_analysis(benchmark, model_dir, output_csv, input_csv=None):
         df = df.sort_values('period_start').reset_index(drop=True)
     else:
         df = df.sort_index().reset_index(drop=True)
+
+    # Resolve current-config and split per-core "_prev" columns
+    curr_map, prev_map = resolve_reconfig_columns(df)
+    print(f"\n  Resolved current-config columns: {curr_map}")
+    print(f"  Resolved previous-config columns (per core): {prev_map}")
+    missing_prev = [k for k, v in prev_map.items() if v is None]
+    if missing_prev:
+        print(f"  [WARN] No previous-config column found for: {missing_prev} "
+              f"-- reconfig cost for those dimensions will be treated as 0/unchanged.")
+
+    ppw_best_col = resolve_first_present(df, PPW_BEST_CANDIDATES)
+    ppw_prev_col = resolve_first_present(df, PPW_PREV_CANDIDATES)
+    ips_prev_col = resolve_first_present(df, IPS_PREV_CANDIDATES)
 
     # Calculate inference energy
     print(f"\n{'='*70}")
@@ -284,107 +419,146 @@ def run_cost_analysis(benchmark, model_dir, output_csv, input_csv=None):
     print(f"    Memory accesses:    {inf_breakdown['e_mem']:.2f} pJ")
     print(f"    Total inference:    {inf_energy:.2f} pJ ({inf_energy/1e6:.4f} μJ)")
 
-    # Calculate reconfiguration energy per row
+    # Calculate reconfiguration energy — vectorised, per row vs that row's
+    # own "_prev" columns (NOT the previous row in the dataframe)
     print(f"\n{'='*70}")
     print("  RECONFIGURATION ENERGY CALCULATION")
     print('='*70)
 
-    # Initialize columns
     df['inference_energy_pJ'] = inf_energy
-    df['reconfig_energy_pJ'] = 0.0
-    df['config_changed'] = False
-    df['btb_changed'] = False
-    df['l2_changed'] = False
-    df['l3_changed'] = False
-    df['prefetcher_changed'] = False
-    df['reconfig_breakdown'] = ''
 
-    # Process each row (compare with previous)
-    changed_counts = {'btbCore0': 0, 'btbCore1': 0, 'L2': 0, 'L3': 0, 'prefetcher': 0}
-    total_reconfig_energy = 0.0
+    reconfig = calc_reconfig_energy_vectorized(df, curr_map, prev_map, TECH_PARAMS)
+    for col, arr in reconfig.items():
+        df[col] = arr
 
-    for i in range(1, len(df)):
-        row = df.iloc[i]
-        prev_row = df.iloc[i-1]
-
-        reconfig_e, breakdown, changed = calc_reconfig_energy(row, prev_row, TECH_PARAMS)
-
-        df.at[i, 'reconfig_energy_pJ'] = reconfig_e
-        df.at[i, 'config_changed'] = len(changed) > 0
-        df.at[i, 'reconfig_breakdown'] = str(breakdown)
-
-        for comp in changed:
-            if comp in ['btbCore0', 'btbCore1']:
-                df.at[i, 'btb_changed'] = True
-                changed_counts['btbCore0'] += 1 if comp == 'btbCore0' else 0
-                changed_counts['btbCore1'] += 1 if comp == 'btbCore1' else 0
-            elif comp == 'L2':
-                df.at[i, 'l2_changed'] = True
-                changed_counts['L2'] += 1
-            elif comp == 'L3':
-                df.at[i, 'l3_changed'] = True
-                changed_counts['L3'] += 1
-            elif comp == 'prefetcher':
-                df.at[i, 'prefetcher_changed'] = True
-                changed_counts['prefetcher'] += 1
-
-        total_reconfig_energy += reconfig_e
-
-    # Calculate net PPW
-    if 'PPW_best' in df.columns:
-        # Convert PPW to energy-aware metric
-        interval_inst = 500000  # 500K instructions per interval
-        interval_time = interval_inst / (df['ips_prev'].mean() if 'ips_prev' in df.columns else 1e9)
-
-        # Net PPW = raw PPW - overhead
-        df['net_ppw'] = df['PPW_best'] - (df['inference_energy_pJ'] + df['reconfig_energy_pJ']) / interval_time
-
-    # Print reconfiguration summary
-    n_intervals = len(df) - 1  # Exclude first row
-    n_changed = df['config_changed'].sum()
+    valid_mask = df['has_prev_data'].values
+    n_intervals = int(valid_mask.sum())
+    n_changed = int((df['config_changed'] & df['has_prev_data']).sum())
 
     print(f"\n  Reconfiguration Summary:")
-    print(f"    Total intervals:     {n_intervals}")
-    print(f"    Intervals changed:   {n_changed} ({n_changed/n_intervals*100:.1f}%)")
-    print(f"    Intervals unchanged: {n_intervals - n_changed} ({(n_intervals-n_changed)/n_intervals*100:.1f}%)")
+    print(f"    Total rows:              {len(df)}")
+    print(f"    Rows with prev-config data: {n_intervals}")
+    if n_intervals > 0:
+        print(f"    Intervals changed:   {n_changed} ({n_changed/n_intervals*100:.1f}%)")
+        print(f"    Intervals unchanged: {n_intervals - n_changed} ({(n_intervals-n_changed)/n_intervals*100:.1f}%)")
 
-    print(f"\n  Component Change Frequency:")
-    print(f"    BTB core0:    {changed_counts['btbCore0']:5d} ({changed_counts['btbCore0']/n_intervals*100:.1f}%)")
-    print(f"    BTB core1:    {changed_counts['btbCore1']:5d} ({changed_counts['btbCore1']/n_intervals*100:.1f}%)")
-    print(f"    L2 cache:     {changed_counts['L2']:5d} ({changed_counts['L2']/n_intervals*100:.1f}%)")
-    print(f"    L3 cache:     {changed_counts['L3']:5d} ({changed_counts['L3']/n_intervals*100:.1f}%)")
-    print(f"    Prefetcher:   {changed_counts['prefetcher']:5d} ({changed_counts['prefetcher']/n_intervals*100:.1f}%)")
+        print(f"\n  Component Change Frequency:")
+        for comp_col, label in [('l2_changed', 'L2 cache (either core)'),
+                                 ('l3_changed', 'L3 cache'),
+                                 ('btb_changed', 'BTB (either core)'),
+                                 ('prefetcher_changed', 'Prefetcher (either core)')]:
+            n_comp = int((df[comp_col] & df['has_prev_data']).sum())
+            print(f"    {label:<26} {n_comp:5d} ({n_comp/n_intervals*100:.1f}%)")
 
-    print(f"\n  Reconfiguration Energy:")
-    print(f"    Total:          {total_reconfig_energy:.2f} pJ")
-    print(f"    Avg per change: {total_reconfig_energy/n_changed:.2f} pJ" if n_changed > 0 else "    N/A (no changes)")
-    print(f"    Avg per interval: {total_reconfig_energy/n_intervals:.2f} pJ")
+        total_reconfig_energy = float(df.loc[valid_mask, 'reconfig_energy_pJ'].sum())
+        print(f"\n  Reconfiguration Energy:")
+        print(f"    Total:            {total_reconfig_energy:.2f} pJ")
+        if n_changed > 0:
+            avg_reconfig = df.loc[valid_mask & df['config_changed'], 'reconfig_energy_pJ'].mean()
+            print(f"    Avg per change:   {avg_reconfig:.2f} pJ")
+        else:
+            print(f"    Avg per change:   N/A (no changes)")
+        print(f"    Avg per interval: {total_reconfig_energy/n_intervals:.2f} pJ")
+    else:
+        print("    [WARN] No rows had complete previous-config data -- "
+              "reconfiguration energy is 0 for all rows.")
+
+    # Calculate net PPW and Net PPW Gain %
+    print(f"\n{'='*70}")
+    print("  NET PPW CALCULATION")
+    print('='*70)
+
+    if ppw_best_col is not None:
+        interval_inst = 500000  # 500K instructions per interval
+        if ips_prev_col is not None:
+            interval_time = interval_inst / df[ips_prev_col].mean()
+        else:
+            interval_time = interval_inst / 1e9
+            print("  [WARN] No ips_prev column found -- using a fixed 1e9 IPS "
+                  "assumption for interval_time.")
+
+        overhead_pJ = df['inference_energy_pJ'] + df['reconfig_energy_pJ']
+        df['net_ppw'] = df[ppw_best_col] - overhead_pJ / interval_time
+
+        raw_ppw_mean = df[ppw_best_col].mean()
+        net_ppw_mean = df['net_ppw'].mean()
+        overhead_pct = (raw_ppw_mean - net_ppw_mean) / raw_ppw_mean * 100 if raw_ppw_mean else np.nan
+
+        print(f"\n  Raw PPW (best config, avg):  {raw_ppw_mean:.4e}")
+        print(f"  Net PPW (after overhead, avg): {net_ppw_mean:.4e}")
+        print(f"  PPW overhead (cost of ML control): {overhead_pct:.2f}%")
+
+        # --- Net PPW Gain % --------------------------------------------------
+        # How much better (or worse) off are you, after paying inference +
+        # reconfig overhead, versus simply staying on the previous config?
+        if ppw_prev_col is not None:
+            baseline = df[ppw_prev_col]
+            gain_source = f"'{ppw_prev_col}' column (actual previous-config PPW)"
+        else:
+            # Fallback: approximate the "stayed on previous config" baseline
+            # using the prior row's own best-PPW, sorted by period. This is
+            # an approximation (previous row's optimal PPW under ITS config,
+            # not necessarily what that config would net during this row's
+            # interval) -- flagged clearly below and in the output.
+            baseline = df[ppw_best_col].shift(1)
+            gain_source = ("previous row's PPW_best, shifted by one period "
+                           "(approximation -- no explicit ppw_prev column found)")
+
+        valid_gain = baseline.notna() & (baseline != 0) & df['net_ppw'].notna()
+        df['net_ppw_gain_pct'] = np.where(
+            valid_gain, (df['net_ppw'] - baseline) / baseline * 100, np.nan
+        )
+
+        gain_series = df.loc[valid_gain, 'net_ppw_gain_pct']
+        print(f"\n  Net PPW Gain % baseline: {gain_source}")
+        if len(gain_series) > 0:
+            print(f"  Net PPW Gain %  (mean):    {gain_series.mean():+.2f}%")
+            print(f"  Net PPW Gain %  (median):  {gain_series.median():+.2f}%")
+            print(f"  Rows with net gain > 0:    {(gain_series > 0).sum():,} "
+                  f"({(gain_series > 0).mean()*100:.1f}%)")
+            print(f"  Rows with net loss < 0:    {(gain_series < 0).sum():,} "
+                  f"({(gain_series < 0).mean()*100:.1f}%)")
+        else:
+            print("  [WARN] Could not compute Net PPW Gain % -- no valid baseline rows.")
+    else:
+        print("  [WARN] No PPW_best-style column found -- skipping net PPW / "
+              "Net PPW Gain % calculation entirely.")
+        df['net_ppw'] = np.nan
+        df['net_ppw_gain_pct'] = np.nan
 
     # Save output
     print(f"\n{'='*70}")
     print("  SAVING OUTPUT")
     print('='*70)
 
-    # Select columns for output
-    output_cols = [
-        'benchmark', 'period_start', 'period_end',
-        'btbCore0', 'btbCore1', 'prefetcher', 'L2', 'L3',
-        'btbCore0_prev' if 'btbCore0_prev' in df.columns else 'btbCore0',
-        'btbCore1_prev' if 'btbCore1_prev' in df.columns else 'btbCore1',
-        'config_changed', 'btb_changed', 'l2_changed', 'l3_changed', 'prefetcher_changed',
-        'inference_energy_pJ', 'reconfig_energy_pJ', 'reconfig_breakdown',
-        'PPW_best' if 'PPW_best' in df.columns else 'ppw',
-        'net_ppw' if 'net_ppw' in df.columns else 'ppw',
+    # Select columns for output — current config, split per-core prev config,
+    # change flags, energy, and both PPW metrics.
+    output_cols = ['benchmark', 'period_start', 'period_end']
+    for key in CURRENT_DIMENSIONS:
+        if curr_map.get(key):
+            output_cols.append(curr_map[key])
+    for key in PREV_DIMENSIONS:
+        if prev_map.get(key):
+            output_cols.append(prev_map[key])
+    output_cols += [
+        'config_changed', 'l2_changed', 'l3_changed', 'btb_changed', 'prefetcher_changed',
+        'inference_energy_pJ', 'reconfig_energy_pJ',
     ]
+    if ppw_best_col:
+        output_cols.append(ppw_best_col)
+    if ppw_prev_col:
+        output_cols.append(ppw_prev_col)
+    output_cols += ['net_ppw', 'net_ppw_gain_pct']
 
-    # Filter to existing columns
-    output_cols = [c for c in output_cols if c in df.columns]
+    # Filter to existing columns, de-duplicated, preserving order
+    seen = set()
+    output_cols = [c for c in output_cols if c in df.columns and not (c in seen or seen.add(c))]
     df[output_cols].to_csv(output_csv, index=False)
 
     print(f"  Output saved to: {output_csv}")
     print(f"  Rows: {len(df)}, Columns: {len(output_cols)}")
 
-    return df
+    return df, inf_breakdown, model_path
 
 
 def generate_report(df, model_info, output_path):
@@ -418,36 +592,48 @@ def generate_report(df, model_info, output_path):
         f.write(f"    E_gate_per_btb_entry:   {TECH_PARAMS['E_gate_per_btb_entry_pJ']:.3f} pJ\n")
         f.write(f"    E_gate_per_l2_kb:       {TECH_PARAMS['E_gate_per_l2_kb_pJ']:.3f} pJ\n")
         f.write(f"    E_gate_per_l3_kb:       {TECH_PARAMS['E_gate_per_l3_kb_pJ']:.3f} pJ\n")
-        f.write(f"    E_gate_per_prefetcher:  {TECH_PARAMS['E_gate_per_prefetcher_pJ']:.3f} pJ\n\n")
+        f.write(f"    E_gate_per_prefetcher:  {TECH_PARAMS['E_gate_per_prefetcher_pJ']:.3f} pJ (per core)\n\n")
 
         f.write("="*70 + "\n")
         f.write("  RESULTS SUMMARY\n")
         f.write("="*70 + "\n\n")
 
-        if 'config_changed' in df.columns:
-            n_changed = df['config_changed'].sum()
-            n_total = len(df) - 1
-            f.write(f"  Config changes:      {n_changed}/{n_total} ({n_changed/n_total*100:.1f}%)\n")
+        if 'config_changed' in df.columns and 'has_prev_data' in df.columns:
+            valid = df['has_prev_data']
+            n_changed = int((df['config_changed'] & valid).sum())
+            n_total = int(valid.sum())
+            if n_total > 0:
+                f.write(f"  Config changes:      {n_changed}/{n_total} ({n_changed/n_total*100:.1f}%)\n")
 
         if 'inference_energy_pJ' in df.columns:
             f.write(f"  Inference energy:    {df['inference_energy_pJ'].iloc[0]:.2f} pJ/interval\n")
 
         if 'reconfig_energy_pJ' in df.columns:
             total_reconfig = df['reconfig_energy_pJ'].sum()
-            avg_reconfig = df[df['config_changed']]['reconfig_energy_pJ'].mean() if df['config_changed'].any() else 0
+            avg_reconfig = (df[df['config_changed']]['reconfig_energy_pJ'].mean()
+                            if df['config_changed'].any() else 0)
             f.write(f"  Total reconfig:      {total_reconfig:.2f} pJ\n")
             f.write(f"  Avg per change:      {avg_reconfig:.2f} pJ\n")
 
         if 'net_ppw' in df.columns:
-            raw_ppw = df['PPW_best'].mean() if 'PPW_best' in df.columns else df.get('ppw', 0).mean()
+            ppw_best_col = resolve_first_present(df, PPW_BEST_CANDIDATES)
+            raw_ppw = df[ppw_best_col].mean() if ppw_best_col else np.nan
             net_ppw = df['net_ppw'].mean()
             f.write(f"  Raw PPW (avg):       {raw_ppw:.4e}\n")
             f.write(f"  Net PPW (avg):       {net_ppw:.4e}\n")
-            f.write(f"  PPW overhead:        {(raw_ppw-net_ppw)/raw_ppw*100:.2f}%\n")
+            if raw_ppw:
+                f.write(f"  PPW overhead:        {(raw_ppw-net_ppw)/raw_ppw*100:.2f}%\n")
+
+        if 'net_ppw_gain_pct' in df.columns and df['net_ppw_gain_pct'].notna().any():
+            gain = df['net_ppw_gain_pct'].dropna()
+            f.write(f"\n  Net PPW Gain % (mean):    {gain.mean():+.2f}%\n")
+            f.write(f"  Net PPW Gain % (median):  {gain.median():+.2f}%\n")
+            f.write(f"  Rows with net gain > 0:   {(gain > 0).sum():,} ({(gain > 0).mean()*100:.1f}%)\n")
+            f.write(f"  Rows with net loss < 0:   {(gain < 0).sum():,} ({(gain < 0).mean()*100:.1f}%)\n")
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Cost analysis for RF-based post-silicon customization')
+    parser = argparse.ArgumentParser(description='Cost analysis for RF-based post-silicon customization (7-way)')
     parser.add_argument('--benchmark', required=True, help='Benchmark name (barnes, cholesky, radiosity)')
     parser.add_argument('--model-dir', required=True, help='Directory containing saved RF model')
     parser.add_argument('--output', required=True, help='Output CSV path')
@@ -457,14 +643,16 @@ def main():
     args = parser.parse_args()
 
     # Run analysis
-    df = run_cost_analysis(args.benchmark, args.model_dir, args.output, args.input_csv)
+    df, inf_breakdown, model_path = run_cost_analysis(
+        args.benchmark, args.model_dir, args.output, args.input_csv
+    )
 
     # Generate report if requested
     if args.report:
         model_info = {
-            'path': args.model_dir,
-            'n_estimators': TECH_PARAMS.get('n_estimators', 200),
-            'max_depth': TECH_PARAMS.get('max_depth', 15),
+            'path': model_path,
+            'n_estimators': inf_breakdown['n_estimators'],
+            'max_depth': inf_breakdown['max_depth'],
         }
         generate_report(df, model_info, args.report)
         print(f"  Report saved to: {args.report}")
