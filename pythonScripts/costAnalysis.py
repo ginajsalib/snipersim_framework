@@ -334,9 +334,9 @@ def load_config_data(benchmark, input_csv=None):
 
     # Default paths for training data
     default_paths = {
-        'barnes': '/home/gina/Desktop/snipersim_framework/pythonScripts/finalTrainingData/barnes_train_with_top3_fixed.csv',
-        'cholesky': '/home/gina/Desktop/snipersim_framework/pythonScripts/finalTrainingData/cholesky_train_with_top3_fixed.csv',
-        'radiosity': '/home/gina/Desktop/snipersim_framework/pythonScripts/finalTrainingData/radiosity_train_with_top3_fixed.csv',
+        'barnes': '/home/gina/Desktop/snipersim_framework/pythonScripts/barnes/train_with_top3_barnes.csv',
+        'cholesky': '/home/gina/Desktop/snipersim_framework/pythonScripts/cholesky/train_with_top3_cholesky.csv',
+        'fft': '/home/gina/Desktop/snipersim_framework/pythonScripts/fft/train_with_top3_fft.csv',
     }
 
     if benchmark in default_paths and os.path.exists(default_paths[benchmark]):
