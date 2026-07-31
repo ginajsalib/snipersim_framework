@@ -38,6 +38,9 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 import joblib
+import matplotlib
+matplotlib.use('Agg')  # headless -- this script runs without a display
+import matplotlib.pyplot as plt
 from sklearn.preprocessing import LabelEncoder
 from sklearn.impute import SimpleImputer
 
@@ -309,10 +312,10 @@ def process_merged_full(bench, path, needed_pairs, chunksize=200_000):
 # DATA FILES
 # ══════════════════════════════════════════════════════════════════════════════
 DATA_FILES = {
-    'barnes':    '/home/gina/Desktop/snipersim_framework/pythonScripts/finalTrainingData/barnes_train_with_top3_fixed.csv',
-    'cholesky':  '/home/gina/Desktop/snipersim_framework/pythonScripts/finalTrainingData/cholesky_train_with_top3_fixed.csv',
-    'radiosity': '/home/gina/Desktop/snipersim_framework/pythonScripts/finalTrainingData/radiosity_train_with_top3_fixed.csv',
-    # fft excluded — all PPW values are NaN
+    'barnes':    '/home/gina/Desktop/snipersim_framework/pythonScripts/barnes/train_with_top3_barnes.csv',
+    'cholesky':  '/home/gina/Desktop/snipersim_framework/pythonScripts/cholesky/train_with_top3_cholesky.csv',
+    'fft': '/home/gina/Desktop/snipersim_framework/pythonScripts/fft/train_with_top3_fft.csv',
+  'radiosity': '/home/gina/Desktop/snipersim_framework/pythonScripts/radiosity/train_with_top3_radiosity.csv',
 }
 
 METADATA_COLUMNS_TO_DROP = [
@@ -825,6 +828,63 @@ for bench in benchmarks:
     loss = df_b['pred_ppw_loss_pct'].dropna()
     out(f'    PPW % loss stats:   {stats_str(loss)}')
     loss_buckets(df_b['pred_ppw_loss_pct'], n, label='Model prediction ')
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PPW LOSS DISTRIBUTION PLOTS  (CDF, histogram, box plot)
+# ─────────────────────────────────────────────────────────────────────────────
+section('PPW LOSS DISTRIBUTION PLOTS')
+plot_dir = os.path.join(args.output_dir, 'plots')
+os.makedirs(plot_dir, exist_ok=True)
+for bench in benchmarks:
+    loss = subset(bench)['pred_ppw_loss_pct'].dropna()
+    if loss.empty:
+        out(f'  [SKIP] {bench}: no PPW loss data to plot')
+        continue
+    # Histogram
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.hist(loss, bins=50, color='steelblue', edgecolor='black')
+    ax.set_xlabel('PPW % loss vs optimal'); ax.set_ylabel('Sample count')
+    ax.set_title(f'PPW Loss Histogram — {bench}')
+    fig.tight_layout()
+    fig.savefig(os.path.join(plot_dir, f'ppw_loss_hist_{bench}.png'), dpi=150)
+    plt.close(fig)
+    # CDF
+    fig, ax = plt.subplots(figsize=(8, 5))
+    sorted_loss = np.sort(loss.values)
+    cdf = np.arange(1, len(sorted_loss) + 1) / len(sorted_loss)
+    ax.plot(sorted_loss, cdf, color='darkorange')
+    ax.set_xlabel('PPW % loss vs optimal'); ax.set_ylabel('Cumulative fraction')
+    ax.set_title(f'PPW Loss CDF — {bench}')
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(os.path.join(plot_dir, f'ppw_loss_cdf_{bench}.png'), dpi=150)
+    plt.close(fig)
+    # Box plot
+    fig, ax = plt.subplots(figsize=(4, 6))
+    ax.boxplot(loss, vert=True, showfliers=True)
+    ax.set_ylabel('PPW % loss vs optimal')
+    ax.set_title(f'PPW Loss Box Plot — {bench}')
+    fig.tight_layout()
+    fig.savefig(os.path.join(plot_dir, f'ppw_loss_box_{bench}.png'), dpi=150)
+    plt.close(fig)
+    out(f'  {bench}: saved plots -> {plot_dir}/ppw_loss_{{hist,cdf,box}}_{bench}.png')
+
+# Comparison box plot across benchmarks -- generated ONCE, after the loop
+# (moved out of the per-benchmark loop, which would otherwise regenerate
+# and overwrite this same file on every iteration).
+per_bench_losses = [subset(b)['pred_ppw_loss_pct'].dropna() for b in benchmarks[1:]]
+non_empty = [(b, s) for b, s in zip(benchmarks[1:], per_bench_losses) if not s.empty]
+if non_empty:
+    labels, series_list = zip(*non_empty)
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.boxplot(series_list, tick_labels=list(labels))
+    ax.set_ylabel('PPW % loss vs optimal')
+    ax.set_title('PPW Loss by Benchmark')
+    fig.tight_layout()
+    fig.savefig(os.path.join(plot_dir, 'ppw_loss_box_comparison.png'), dpi=150)
+    plt.close(fig)
+    out(f'  Comparison plot saved -> {plot_dir}/ppw_loss_box_comparison.png')
 
 
 section('ANALYSIS 2 — STATIC BASELINE COMPARISON')
