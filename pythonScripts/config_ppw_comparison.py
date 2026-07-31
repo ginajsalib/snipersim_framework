@@ -111,15 +111,15 @@ def _finite(series):
 # PER-BENCHMARK COMPUTATION
 # ==============================================================================
 
-def compute_achieved_ppw(predictions_csv, benchmark):
-    """Mean of predictions['PPW_best'] (the achieved PPW under the model's
-    predicted config each interval), finite values only. Filters to rows
-    matching `benchmark` if a benchmark column is present and contains
-    other values (defensive, in case a file holds more than one benchmark)."""
+def load_achieved_by_period(predictions_csv, benchmark):
+    """Load the predictions file and return {period_start: achieved_ppw}
+    for finite values only, plus basic counts. Filters to `benchmark` if a
+    benchmark column is present and contains other values."""
     df = pd.read_csv(predictions_csv)
     ppw_col = resolve_first_present(df.columns, PRED_PPW_CANDIDATES)
-    if ppw_col is None:
-        raise ValueError(f"No PPW column found in {predictions_csv}. Columns: {list(df.columns)}")
+    period_col = resolve_first_present(df.columns, PRED_PERIOD_CANDIDATES)
+    if ppw_col is None or period_col is None:
+        raise ValueError(f"Missing PPW or period column in {predictions_csv}. Columns: {list(df.columns)}")
 
     bench_col = find_col(df.columns, 'benchmark')
     if bench_col is not None:
@@ -129,24 +129,43 @@ def compute_achieved_ppw(predictions_csv, benchmark):
                   f"-- filtering to only '{benchmark}'.")
             df = df[df[bench_col] == benchmark]
 
-    vals = _finite(df[ppw_col])
-    n_dropped = len(df) - len(vals)
-    return {
-        'achieved_ppw_mean': vals.mean() if len(vals) else np.nan,
+    ppw_vals = pd.to_numeric(df[ppw_col], errors='coerce')
+    finite = np.isfinite(ppw_vals)
+    n_dropped = int((~finite).sum())
+
+    # If the same period appears more than once, keep the first -- flag it,
+    # since predict_config.py output is expected to be one row per interval.
+    dupe_periods = df.loc[finite, period_col].duplicated().sum()
+    if dupe_periods:
+        print(f"  [WARN] {predictions_csv} has {dupe_periods} duplicate period_start value(s) "
+              f"among finite rows -- keeping the first occurrence of each.")
+
+    achieved_by_period = {}
+    for period, val in zip(df.loc[finite, period_col], ppw_vals[finite]):
+        if period not in achieved_by_period:
+            achieved_by_period[period] = val
+
+    return achieved_by_period, {
         'achieved_n_intervals': len(df),
-        'achieved_n_finite': len(vals),
+        'achieved_n_finite': len(achieved_by_period),
         'achieved_n_dropped_nonfinite': n_dropped,
     }
 
 
-def compute_oracle_and_static_ppw(sweep_csv, chunksize=200_000):
+def compute_matched_metrics(sweep_csv, achieved_by_period, chunksize=200_000):
     """
-    Single streaming pass over the (potentially large) sweep file.
-      - Oracle: dedup PPW_best per period_start (it's repeated across every
-        config-row for that period), then mean the finite per-period values.
-      - Best static: accumulate sum/count of ppw_prev per candidate config
-        (identified by the 7 config-dimension columns), then take the config
-        with the highest mean.
+    Single streaming pass over the sweep file, restricted throughout to the
+    periods present in achieved_by_period (finite achieved value) -- this is
+    what guarantees achieved_mean and best_static_mean can never
+    mathematically exceed oracle_mean: all three are averaged over the exact
+    same set of periods, and at every one of those periods, oracle is by
+    definition >= any single candidate config's value (including the one
+    the model picked, and including whichever config ends up "best static").
+
+    A period only enters oracle_by_period (and therefore the matched set) if
+    its PPW_best value in the sweep file is itself finite -- so all three
+    metrics end up computed over: periods with a finite achieved value AND a
+    finite oracle value.
     """
     header = pd.read_csv(sweep_csv, nrows=0)
     columns = list(header.columns)
@@ -169,41 +188,62 @@ def compute_oracle_and_static_ppw(sweep_csv, chunksize=200_000):
         )
 
     usecols = [period_col, achieved_col, oracle_col] + list(dim_cols.values())
-    usecols = list(dict.fromkeys(usecols))  # de-dup while preserving order
+    usecols = list(dict.fromkeys(usecols))
 
-    oracle_by_period = {}          # period_start -> oracle PPW (first finite value seen)
-    static_sum = {}                # config_key -> running sum of ppw_prev
-    static_count = {}              # config_key -> running finite-value count
+    oracle_by_period = {}   # period -> oracle PPW, only for periods also in achieved_by_period
+    static_sum = {}
+    static_count = {}
     n_rows = 0
     n_static_dropped = 0
+    sweep_periods_seen = set()
 
     for chunk in pd.read_csv(sweep_csv, usecols=usecols, chunksize=chunksize):
         n_rows += len(chunk)
+        sweep_periods_seen.update(chunk[period_col].unique())
 
-        # --- oracle: dedup by period ---
-        oracle_vals = pd.to_numeric(chunk[oracle_col], errors='coerce')
+        in_matched = chunk[period_col].isin(achieved_by_period.keys())
+        if not in_matched.any():
+            continue
+        sub = chunk.loc[in_matched]
+
+        oracle_vals = pd.to_numeric(sub[oracle_col], errors='coerce')
         finite_oracle = np.isfinite(oracle_vals)
-        for period, val in zip(chunk.loc[finite_oracle, period_col], oracle_vals[finite_oracle]):
+        for period, val in zip(sub.loc[finite_oracle, period_col], oracle_vals[finite_oracle]):
             if period not in oracle_by_period:
                 oracle_by_period[period] = val
 
-        # --- best static: accumulate per config ---
+        # only accumulate static candidates for rows whose period has a
+        # finite oracle value too, so static's period set is a subset of
+        # oracle's period set (same guarantee)
+        row_has_finite_oracle = sub[period_col].isin(oracle_by_period.keys())
+        sub2 = sub.loc[row_has_finite_oracle]
+
         config_key = pd.Series(
-            list(zip(*[chunk[dim_cols[k]].astype(str) for k in SWEEP_CONFIG_DIMENSIONS])),
-            index=chunk.index,
+            list(zip(*[sub2[dim_cols[k]].astype(str) for k in SWEEP_CONFIG_DIMENSIONS])),
+            index=sub2.index,
         )
-        achieved_vals = pd.to_numeric(chunk[achieved_col], errors='coerce')
-        finite_static = np.isfinite(achieved_vals)
+        static_vals = pd.to_numeric(sub2[achieved_col], errors='coerce')
+        finite_static = np.isfinite(static_vals)
         n_static_dropped += int((~finite_static).sum())
 
-        for key, val in zip(config_key[finite_static], achieved_vals[finite_static]):
+        for key, val in zip(config_key[finite_static], static_vals[finite_static]):
             static_sum[key] = static_sum.get(key, 0.0) + val
             static_count[key] = static_count.get(key, 0) + 1
 
-    if not oracle_by_period:
+    matched_periods = list(oracle_by_period.keys())
+    n_matched = len(matched_periods)
+
+    unmatched_in_predictions = set(achieved_by_period.keys()) - sweep_periods_seen
+    if unmatched_in_predictions:
+        print(f"  [WARN] {len(unmatched_in_predictions)} period(s) from the predictions file "
+              f"were not found at all in the sweep file (period_start format mismatch?).")
+
+    if n_matched == 0:
         oracle_mean = np.nan
+        achieved_mean_matched = np.nan
     else:
         oracle_mean = float(np.mean(list(oracle_by_period.values())))
+        achieved_mean_matched = float(np.mean([achieved_by_period[p] for p in matched_periods]))
 
     if not static_count:
         best_static_mean = np.nan
@@ -217,10 +257,11 @@ def compute_oracle_and_static_ppw(sweep_csv, chunksize=200_000):
         best_static_config = dict(zip(SWEEP_CONFIG_DIMENSIONS.keys(), best_key))
 
     return {
+        'achieved_ppw_mean': achieved_mean_matched,
         'oracle_ppw_mean': oracle_mean,
-        'oracle_n_periods': len(oracle_by_period),
         'best_static_ppw_mean': best_static_mean,
         'best_static_config': best_static_config,
+        'n_matched_periods': n_matched,
         'n_candidate_configs': n_candidate_configs,
         'sweep_n_rows': n_rows,
         'sweep_n_dropped_nonfinite': n_static_dropped,
@@ -259,9 +300,6 @@ def plot_comparison(summary_df, outpath):
     ax.bar(x, achieved_pct, width, label='Achieved (model)', color='#4C72B0')
     ax.bar(x + width, static_pct, width, label='Best static config', color='#C44E52')
 
-    for xi, vals in zip(x, [oracle_pct, achieved_pct, static_pct]):
-        pass  # labels added below per-series for clarity
-
     for offset, series in zip([-width, 0, width], [oracle_pct, achieved_pct, static_pct]):
         for xi, v in zip(x, series):
             ax.text(xi + offset, v + 1, f"{v:.1f}%", ha='center', va='bottom', fontsize=8)
@@ -269,10 +307,10 @@ def plot_comparison(summary_df, outpath):
     ax.set_xticks(x)
     ax.set_xticklabels(benchmarks, fontsize=10)
     ax.set_ylabel("PPW as % of oracle", fontsize=10)
-    ax.set_title("Achieved vs. Oracle vs. Best-Static-Config PPW", fontsize=12, fontweight='bold')
+    ax.set_title("Achieved vs. Oracle vs. Best-Static-Config PPW", fontsize=12, fontweight='bold', pad=40)
     ax.set_ylim(0, max(max(achieved_pct, default=100), max(static_pct, default=100), 100) * 1.15)
     ax.axhline(100, color='#55A868', linestyle='--', linewidth=0.8, alpha=0.5)
-    ax.legend(loc='lower right', fontsize=9, frameon=False)
+    ax.legend(loc='lower center', bbox_to_anchor=(0.5, 1.02), ncol=3, fontsize=9, frameon=False)
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     ax.grid(axis='y', linestyle='--', alpha=0.3)
@@ -306,36 +344,36 @@ def main():
     rows = []
     for bench, pred_path, sweep_path in zip(args.benchmark, args.predictions, args.sweep):
         print(f"\n=== {bench} ===")
-        achieved = compute_achieved_ppw(pred_path, bench)
-        print(f"  Achieved (model): {achieved['achieved_ppw_mean']:.4e} "
-              f"({achieved['achieved_n_finite']}/{achieved['achieved_n_intervals']} finite intervals)")
+        achieved_by_period, achieved_meta = load_achieved_by_period(pred_path, bench)
+        print(f"  Predictions: {achieved_meta['achieved_n_finite']}/{achieved_meta['achieved_n_intervals']} "
+              f"finite intervals")
 
-        sweep_stats = compute_oracle_and_static_ppw(sweep_path, chunksize=args.chunksize)
-        print(f"  Oracle:           {sweep_stats['oracle_ppw_mean']:.4e} "
-              f"({sweep_stats['oracle_n_periods']} periods)")
-        print(f"  Best static:      {sweep_stats['best_static_ppw_mean']:.4e} "
-              f"across {sweep_stats['n_candidate_configs']} candidate configs -> "
-              f"{format_config(sweep_stats['best_static_config'])}")
+        metrics = compute_matched_metrics(sweep_path, achieved_by_period, chunksize=args.chunksize)
+        print(f"  Matched periods (finite in both predictions and sweep oracle): {metrics['n_matched_periods']}")
+        print(f"  Achieved (model): {metrics['achieved_ppw_mean']:.4e}")
+        print(f"  Oracle:           {metrics['oracle_ppw_mean']:.4e}")
+        print(f"  Best static:      {metrics['best_static_ppw_mean']:.4e} "
+              f"across {metrics['n_candidate_configs']} candidate configs -> "
+              f"{format_config(metrics['best_static_config'])}")
 
+        oracle_mean = metrics['oracle_ppw_mean']
         row = {
             'benchmark': bench,
-            'achieved_ppw_mean': achieved['achieved_ppw_mean'],
-            'oracle_ppw_mean': sweep_stats['oracle_ppw_mean'],
-            'best_static_ppw_mean': sweep_stats['best_static_ppw_mean'],
-            'best_static_config': format_config(sweep_stats['best_static_config']),
-            'achieved_pct_of_oracle': achieved['achieved_ppw_mean'] / sweep_stats['oracle_ppw_mean'] * 100
-                if sweep_stats['oracle_ppw_mean'] else np.nan,
-            'best_static_pct_of_oracle': sweep_stats['best_static_ppw_mean'] / sweep_stats['oracle_ppw_mean'] * 100
-                if sweep_stats['oracle_ppw_mean'] else np.nan,
+            'achieved_ppw_mean': metrics['achieved_ppw_mean'],
+            'oracle_ppw_mean': oracle_mean,
+            'best_static_ppw_mean': metrics['best_static_ppw_mean'],
+            'best_static_config': format_config(metrics['best_static_config']),
+            'achieved_pct_of_oracle': metrics['achieved_ppw_mean'] / oracle_mean * 100 if oracle_mean else np.nan,
+            'best_static_pct_of_oracle': metrics['best_static_ppw_mean'] / oracle_mean * 100 if oracle_mean else np.nan,
             'achieved_gain_over_static_pct': (
-                (achieved['achieved_ppw_mean'] - sweep_stats['best_static_ppw_mean'])
-                / sweep_stats['best_static_ppw_mean'] * 100
-            ) if sweep_stats['best_static_ppw_mean'] else np.nan,
-            'n_periods': sweep_stats['oracle_n_periods'],
-            'n_candidate_configs': sweep_stats['n_candidate_configs'],
-            'n_intervals_predicted': achieved['achieved_n_intervals'],
-            'n_dropped_nonfinite_achieved': achieved['achieved_n_dropped_nonfinite'],
-            'n_dropped_nonfinite_sweep': sweep_stats['sweep_n_dropped_nonfinite'],
+                (metrics['achieved_ppw_mean'] - metrics['best_static_ppw_mean'])
+                / metrics['best_static_ppw_mean'] * 100
+            ) if metrics['best_static_ppw_mean'] else np.nan,
+            'n_matched_periods': metrics['n_matched_periods'],
+            'n_candidate_configs': metrics['n_candidate_configs'],
+            'n_intervals_predicted': achieved_meta['achieved_n_intervals'],
+            'n_dropped_nonfinite_achieved': achieved_meta['achieved_n_dropped_nonfinite'],
+            'n_dropped_nonfinite_sweep': metrics['sweep_n_dropped_nonfinite'],
         }
         rows.append(row)
 
