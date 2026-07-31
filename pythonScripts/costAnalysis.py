@@ -634,6 +634,36 @@ def run_cost_analysis(benchmark, model_dir, output_csv, input_csv, sweep_csv):
         print(f"  Net PPW Gain %  (median):  {gain_series.median():+.2f}%")
         print(f"  Rows with net gain > 0:    {(gain_series > 0).sum():,} ({(gain_series > 0).mean()*100:.1f}%)")
         print(f"  Rows with net loss < 0:    {(gain_series < 0).sum():,} ({(gain_series < 0).mean()*100:.1f}%)")
+
+        # If mean and median diverge sharply, that's almost always a small
+        # number of rows with a near-zero baseline_ppw blowing up the
+        # percentage (any moderate absolute diff / tiny denominator ->
+        # huge %). Surface a robust alternative and the actual offending
+        # rows rather than leaving the mean silently misleading.
+        mean_val, median_val = gain_series.mean(), gain_series.median()
+        if abs(median_val) > 1e-9 and abs(mean_val - median_val) > 5 * abs(median_val) + 10:
+            trimmed = gain_series.clip(gain_series.quantile(0.01), gain_series.quantile(0.99))
+            print(f"\n  [WARN] Mean is far from median -- almost certainly driven by a few rows with a "
+                  f"near-zero baseline_ppw (any diff / tiny denominator = huge %%), not a real typical "
+                  f"gain. Treat the median as the representative figure.")
+            print(f"  Net PPW Gain %  (1st-99th percentile trimmed mean): {trimmed.mean():+.2f}%")
+
+            n_show = 10
+            worst_baseline = df.loc[valid_gain].reindex(
+                df.loc[valid_gain, 'baseline_ppw'].abs().sort_values().index
+            ).head(n_show)
+            cols_to_show = [c for c in ['period_start', 'baseline_ppw', 'achieved_ppw', 'net_ppw',
+                                         'net_ppw_gain_pct'] if c in worst_baseline.columns]
+            print(f"\n  Smallest-magnitude baseline_ppw rows (likely source of the blowup):")
+            with pd.option_context('display.float_format', lambda x: f'{x:.4e}'):
+                print(worst_baseline[cols_to_show].to_string(index=False))
+
+            top_extreme = df.loc[valid_gain].reindex(
+                df.loc[valid_gain, 'net_ppw_gain_pct'].abs().sort_values(ascending=False).index
+            ).head(n_show)
+            print(f"\n  Most extreme |Net PPW Gain %| rows:")
+            with pd.option_context('display.float_format', lambda x: f'{x:.4e}'):
+                print(top_extreme[cols_to_show].to_string(index=False))
     else:
         print("  [WARN] Could not compute Net PPW Gain % -- no valid baseline rows.")
 
