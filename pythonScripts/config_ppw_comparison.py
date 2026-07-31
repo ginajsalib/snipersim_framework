@@ -298,6 +298,67 @@ def load_predicted_configs_by_period(predictions_csv, benchmark):
     }
 
 
+def diagnose_static_vs_oracle(sweep_csv, best_static_cfg_tuple, oracle_by_period, matched_periods, chunksize=200_000):
+    """
+    Stream the sweep file once more, restricted to rows whose '*_prev'
+    config matches best_static_cfg_tuple, and compare that config's own
+    ppw_prev at each matched period against oracle_by_period[period].
+    Returns how many (and what fraction) of matched periods show the
+    static config's measured PPW exceeding its own period's oracle label --
+    a high, broadly-spread fraction points to the oracle label itself being
+    a non-exhaustive/heuristic search rather than a script bug; a low
+    fraction concentrated in a few periods points more toward a data
+    glitch worth spot-checking directly.
+    """
+    header = pd.read_csv(sweep_csv, nrows=0)
+    columns = list(header.columns)
+    prev_period_col = resolve_first_present(columns, SWEEP_PREV_PERIOD_CANDIDATES)
+    achieved_col = resolve_first_present(columns, SWEEP_ACHIEVED_PPW_CANDIDATES)
+    dim_cols = {key: resolve_first_present(columns, cands) for key, cands in SWEEP_CONFIG_DIMENSIONS.items()}
+    usecols = list(dict.fromkeys([prev_period_col, achieved_col] + list(dim_cols.values())))
+
+    matched_set = set(matched_periods)
+    n_checked = 0
+    n_exceeds = 0
+    excess_sum = 0.0
+
+    for chunk in pd.read_csv(sweep_csv, usecols=usecols, chunksize=chunksize):
+        period_nums = pd.to_numeric(chunk[prev_period_col], errors='coerce')
+        in_matched = period_nums.isin(matched_set)
+        if not in_matched.any():
+            continue
+        sub = chunk.loc[in_matched]
+        sub_periods = period_nums.loc[in_matched]
+
+        config_key = pd.Series(
+            list(zip(*[sub[dim_cols[k]].map(normalize_component) for k in SWEEP_CONFIG_DIMENSIONS])),
+            index=sub.index,
+        )
+        is_target = config_key == best_static_cfg_tuple
+        if not is_target.any():
+            continue
+        sub2 = sub.loc[is_target]
+        sub2_periods = sub_periods.loc[is_target]
+        vals = pd.to_numeric(sub2[achieved_col], errors='coerce')
+        finite = np.isfinite(vals)
+
+        for period, val in zip(sub2_periods[finite], vals[finite]):
+            oracle_val = oracle_by_period.get(period)
+            if oracle_val is None:
+                continue
+            n_checked += 1
+            if val > oracle_val:
+                n_exceeds += 1
+                excess_sum += (val - oracle_val) / oracle_val * 100 if oracle_val else 0.0
+
+    return {
+        'n_checked': n_checked,
+        'n_exceeds': n_exceeds,
+        'frac_exceeds': (n_exceeds / n_checked) if n_checked else np.nan,
+        'avg_excess_pct_when_exceeds': (excess_sum / n_exceeds) if n_exceeds else np.nan,
+    }
+
+
 def compute_matched_metrics(sweep_csv, predicted_configs_by_period, chunksize=200_000):
     """
     Two-pass streaming scan over the sweep file.
@@ -472,7 +533,7 @@ def compute_matched_metrics(sweep_csv, predicted_configs_by_period, chunksize=20
         best_static_mean = np.nan
         best_static_config = None
         n_candidate_configs = 0
-        static_exceeds_oracle_frac = np.nan
+        static_diag = None
     else:
         means = {k: static_sum[k] / static_count[k] for k in static_count}
         best_key = max(means, key=means.get)
@@ -480,17 +541,14 @@ def compute_matched_metrics(sweep_csv, predicted_configs_by_period, chunksize=20
         n_candidate_configs = len(means)
         best_static_config = dict(zip(SWEEP_CONFIG_DIMENSIONS.keys(), best_key))
 
-        # Diagnostic: if best_static_mean ends up > oracle_mean, check
-        # whether the winning static config's OWN ppw_prev exceeds that
-        # period's oracle label on a meaningful fraction of matched
-        # periods (only possible to check for periods we also streamed
-        # achieved-eligible rows for, i.e. matched_periods -- re-derive by
-        # re-reading is expensive, so approximate using static's own
-        # accumulated sum/count is not directly comparable per-period; skip
-        # exact fraction and instead flag the aggregate comparison here).
-        static_exceeds_oracle_frac = None
+        # Diagnostic: if best_static_mean ends up > oracle_mean, actually
+        # check (not just flag) how often the winning config's own ppw_prev
+        # exceeds that period's oracle label, across the matched periods.
+        static_diag = None
         if oracle_mean and best_static_mean > oracle_mean:
-            static_exceeds_oracle_frac = 'best_static_mean > oracle_mean (aggregate)'
+            static_diag = diagnose_static_vs_oracle(
+                sweep_csv, best_key, oracle_by_period, matched_periods, chunksize=chunksize
+            )
 
     return {
         'achieved_ppw_mean': achieved_mean_matched,
@@ -501,7 +559,7 @@ def compute_matched_metrics(sweep_csv, predicted_configs_by_period, chunksize=20
         'n_candidate_configs': n_candidate_configs,
         'sweep_n_rows': n_rows,
         'sweep_n_dropped_nonfinite': n_static_dropped,
-        'static_exceeds_oracle_flag': static_exceeds_oracle_frac,
+        'static_vs_oracle_diagnostic': static_diag,
     }
 
 
@@ -592,12 +650,21 @@ def main():
         print(f"  Best static:      {metrics['best_static_ppw_mean']:.4e} "
               f"across {metrics['n_candidate_configs']} candidate configs -> "
               f"{format_config(metrics['best_static_config'])}")
-        if metrics['static_exceeds_oracle_flag']:
-            print(f"  [NOTE] best-static PPW exceeds oracle PPW in aggregate for this benchmark. This is "
-                  f"likely NOT a script bug -- it can happen if the sweep's oracle label ('PPW_best') was "
-                  f"generated by a non-exhaustive search rather than a true max over the full candidate "
-                  f"space. Worth checking with whoever generated train_with_top3_{bench}.csv how PPW_best "
-                  f"was computed (exhaustive per-period search vs. a shortlist).")
+        diag = metrics.get('static_vs_oracle_diagnostic')
+        if diag:
+            print(f"  [DIAGNOSTIC] Winning static config's own measured PPW exceeds its period's oracle "
+                  f"label in {diag['n_exceeds']}/{diag['n_checked']} matched periods "
+                  f"({diag['frac_exceeds']*100:.1f}%), avg excess when it happens: "
+                  f"{diag['avg_excess_pct_when_exceeds']:.1f}%.")
+            if diag['frac_exceeds'] is not None and diag['frac_exceeds'] > 0.2:
+                print(f"  [NOTE] That's a broad, systematic pattern (not a few outliers) -- this points to "
+                      f"the sweep's oracle label ('PPW_best') being a non-exhaustive search rather than a "
+                      f"script bug. Worth checking with whoever generated train_with_top3_{bench}.csv how "
+                      f"PPW_best was computed (exhaustive per-period search vs. a shortlist).")
+            else:
+                print(f"  [NOTE] That's a small, concentrated fraction -- worth spot-checking those "
+                      f"specific periods directly in train_with_top3_{bench}.csv rather than assuming a "
+                      f"systematic labeling issue.")
 
         oracle_mean = metrics['oracle_ppw_mean']
         row = {
