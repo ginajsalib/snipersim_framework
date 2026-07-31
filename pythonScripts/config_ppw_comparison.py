@@ -188,7 +188,10 @@ def compute_oracle_and_static_ppw(sweep_csv, chunksize=200_000):
                 oracle_by_period[period] = val
 
         # --- best static: accumulate per config ---
-        config_key = pd.Series(list(zip(*[chunk[dim_cols[k]].astype(str) for k in SWEEP_CONFIG_DIMENSIONS])))
+        config_key = pd.Series(
+            list(zip(*[chunk[dim_cols[k]].astype(str) for k in SWEEP_CONFIG_DIMENSIONS])),
+            index=chunk.index,
+        )
         achieved_vals = pd.to_numeric(chunk[achieved_col], errors='coerce')
         finite_static = np.isfinite(achieved_vals)
         n_static_dropped += int((~finite_static).sum())
