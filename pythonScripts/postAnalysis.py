@@ -11,18 +11,21 @@ following analyses on the full dataset:
   4. NO-CHANGE BASELINE           — if prev config kept, is it still top-3?
   5. INFERENCE & RECONFIG COST    — McPAT/GAINESTOWN energy overhead
 
-This mirrors the column-resolution logic used by the 7-way training script
-(rf_7way_config_predictor.py) so it works against the same flexibly-named
-CSV columns (e.g. 'BTBcore0_best' vs 'btbCore0_best') and against models
-saved with the 'rf_7way_config_predictor_*' naming convention.
-
-All per-row logic is fully vectorised with numpy/pandas — no Python loops
-over rows, so 300k+ samples runs in seconds not hours.
+For rows where the model's prediction doesn't match the oracle's top-3
+(1st/2nd/3rd) config for that period, the ACTUAL achieved PPW of the
+predicted config is looked up from merged_full_<bench>.csv -- the full
+per-(period, every-candidate-config) sweep -- rather than assumed to equal
+ppw_3rd. Analysis 2's static baselines are likewise computed from that same
+full sweep (average PPW per candidate config across every period, take the
+max), not from the top-3-only file, since the top-3 file cannot correctly
+answer "what would config X average across the whole benchmark" -- it only
+records periods where X happened to BE in the top 3.
 
 Usage:
-    python post_hoc_analysis.py
-    python post_hoc_analysis.py --model-dir saved_models/
-    python post_hoc_analysis.py --model-dir saved_models/ --model-timestamp 20240101_120000
+    python post_hoc_analysis.py --merged-full-dir /path/to/merged_full/
+    python post_hoc_analysis.py --model-dir saved_models/ --merged-full-dir /path/to/merged_full/
+    python post_hoc_analysis.py --model-dir saved_models/ --model-timestamp 20240101_120000 \\
+        --merged-full-dir /path/to/merged_full/
 """
 
 import os
@@ -43,10 +46,6 @@ warnings.filterwarnings('ignore')
 # ══════════════════════════════════════════════════════════════════════════════
 # COLUMN NAME RESOLUTION HELPERS  (must match rf_7way_config_predictor.py)
 # ══════════════════════════════════════════════════════════════════════════════
-# The pipeline has produced multiple naming conventions for the top-3 config
-# columns over time (e.g. 'btbCore0_best' vs 'BTBcore0_best'). Resolve
-# whichever is actually present, case/separator-insensitively, exactly like
-# the training script does, so this analysis stays in sync with the model.
 
 def _normalize_name(s):
     return s.lower().replace('_', '').replace(' ', '').replace('.', '')
@@ -64,7 +63,6 @@ def find_col(df, expected_name):
     return None
 
 
-# Logical key -> "base" template used to build the per-rank column name.
 CONFIG_DIMENSIONS = {
     'l2_core0':        'L2core0',
     'l2_core1':        'L2core1',
@@ -76,13 +74,9 @@ CONFIG_DIMENSIONS = {
 }
 RANKS = ['best', '2nd', '3rd']
 
-# Canonical target order — MUST match TARGET_KEYS in the training script,
-# since that's the column order the model's .predict() returns.
 TARGET_KEYS = ['l2_core0', 'l2_core1', 'l3', 'btb_core0', 'btb_core1',
                'prefetch_core0', 'prefetch_core1']
 
-# L2/L3/BTB stay numeric targets; only the two prefetcher dims are
-# label-encoded (matches the training script).
 NUMERIC_TARGET_KEYS = ['l2_core0', 'l2_core1', 'l3', 'btb_core0', 'btb_core1']
 PREFETCH_KEYS = ['prefetch_core0', 'prefetch_core1']
 
@@ -92,11 +86,6 @@ def canonical_name(key, rank):
 
 
 def resolve_config_columns(df):
-    """
-    Returns {(dimension_key, rank): actual_column_name} for every
-    dimension x rank combination, raising a clear error listing what's
-    missing rather than silently producing NaNs downstream.
-    """
     resolved = {}
     missing = []
     for key, template in CONFIG_DIMENSIONS.items():
@@ -125,12 +114,6 @@ def resolve_config_columns(df):
 
 
 def normalize_config(vals):
-    """
-    Normalise a config 7-tuple (l2_0, l2_1, l3, btb0, btb1, pf0, pf1) to
-    (float, float, float, float, float, int, int) so numpy int64 / float64 /
-    Python int / float all compare equal. Returns None if any element can't
-    be converted.
-    """
     try:
         l2_0, l2_1, l3, btb0, btb1, pf0, pf1 = vals
         return (float(l2_0), float(l2_1), float(l3), float(btb0), float(btb1),
@@ -139,9 +122,6 @@ def normalize_config(vals):
         return None
 
 
-# "_prev" (i.e. current/previous-interval actual config) column candidates,
-# resolved the same flexible way — used only by Analysis 4 (no-change
-# baseline). Mirrors LOOKUP_DIMENSIONS in the training script.
 PREV_DIMENSIONS = {
     'l2_core0':       ['L2 core 0_prev', 'L2core0_prev', 'l2Core0_prev'],
     'l2_core1':       ['L2 core 1_prev', 'L2core1_prev', 'l2Core1_prev'],
@@ -173,10 +153,157 @@ parser.add_argument('--output-dir', type=str, default='analysis_reports/',
                     help='Directory to save the text report')
 parser.add_argument('--cost-csv', type=str, default=None,
                     help='Optional CSV from costAnalysis.py with inference/reconfig costs')
+parser.add_argument('--merged-full-dir', type=str, default=None, required=True,
+                    help="Directory containing merged_full_<bench>.csv (the full per-period, "
+                         "every-candidate-config sweep -- NOT the top-3-only file). Used to get the "
+                         "REAL achieved PPW when the model's prediction misses the top-3 (instead of "
+                         "assuming it equals ppw_3rd), and to compute Analysis 2's static baselines "
+                         "correctly (avg PPW per config across the whole benchmark, not just periods "
+                         "where that config happened to rank in the top 3).")
+parser.add_argument('--merged-full-chunksize', type=int, default=200_000)
 
 args = parser.parse_args()
 
 os.makedirs(args.output_dir, exist_ok=True)
+
+MERGED_FULL_FILES = {
+    bench: os.path.join(args.merged_full_dir, f'merged_full_{bench}.csv')
+    for bench in ['barnes', 'cholesky', 'radiosity', 'fft']
+}
+
+# merged_full_<bench>.csv column candidates -- this file has NO "_prev"
+# suffix ambiguity: period_start/period_end are this row's own current
+# interval, the config columns identify this row's own config, and 'ppw'
+# is that exact config's real achieved PPW for that exact interval.
+MERGED_FULL_PERIOD_CANDIDATES = ['period_start']
+MERGED_FULL_PPW_CANDIDATES = ['ppw']
+MERGED_FULL_CONFIG_DIMS = {
+    'l2_core0':       ['l2Core0', 'L2core0', 'L2 core 0'],
+    'l2_core1':       ['l2Core1', 'L2core1', 'L2 core 1'],
+    'l3':             ['l3Size', 'L3'],
+    'btb_core0':      ['btbCore0', 'BTBcore0', 'BTB core 0'],
+    'btb_core1':      ['btbCore1', 'BTBcore1', 'BTB core 1'],
+    'prefetch_core0': ['prefetchCore0', 'Prefetchcore0', 'Prefetch core 0'],
+    'prefetch_core1': ['prefetchCore1', 'Prefetchcore1', 'Prefetch core 1'],
+}
+
+
+def resolve_col(columns, candidates):
+    """Like resolve_first_present, but takes a bare list of column names
+    instead of a DataFrame (for reading just a CSV header)."""
+    dummy = pd.DataFrame(columns=columns)
+    return resolve_first_present(dummy, candidates)
+
+
+def parse_period_numeric(period_val):
+    """Extract the numeric instruction-count id from a period label.
+    Handles 'periodicins-100000002' -> 100000002, bare numbers -> as-is,
+    and non-numeric sentinels ('roi-begin', 'roi-end', etc.) -> None."""
+    if period_val is None:
+        return None
+    if isinstance(period_val, (int, float)) and not isinstance(period_val, bool):
+        return None if (isinstance(period_val, float) and np.isnan(period_val)) else float(period_val)
+    s = str(period_val).strip()
+    if s.lower() in ('nan', ''):
+        return None
+    if '-' in s:
+        tail = s.rsplit('-', 1)[-1]
+        if tail.replace('.', '', 1).isdigit():
+            return float(tail)
+        return None
+    if s.replace('.', '', 1).isdigit():
+        return float(s)
+    return None
+
+
+def normalize_component(val):
+    """Normalize one config-dimension value for equality comparison across
+    files that may format the same value as '512', '512.0', 512.0, 'none', etc."""
+    try:
+        f = float(val)
+        if np.isnan(f):
+            return None
+        return round(f, 6)
+    except (TypeError, ValueError):
+        s = str(val).strip().lower()
+        return None if s in ('nan', '') else s
+
+
+def process_merged_full(bench, path, needed_pairs, chunksize=200_000):
+    """
+    Single streaming pass over merged_full_<bench>.csv, serving both fixes
+    at once:
+      - pair_lookup: {(period_num, cfg_tuple): ppw} for exactly the
+        (period, predicted-config) pairs in needed_pairs -- used to get the
+        REAL achieved PPW for rows where the model's prediction missed the
+        top-3 (instead of assuming ppw_3rd).
+      - static_sum / static_count: per-config running totals across EVERY
+        row (every period, every candidate config) in the file -- the
+        correct data for "what would config X average across the whole
+        benchmark", which the top-3-only file cannot answer.
+    """
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"merged_full file not found for benchmark '{bench}': {path}")
+
+    header_cols = list(pd.read_csv(path, nrows=0).columns)
+    period_col = resolve_col(header_cols, MERGED_FULL_PERIOD_CANDIDATES)
+    ppw_col = resolve_col(header_cols, MERGED_FULL_PPW_CANDIDATES)
+    dim_cols = {k: resolve_col(header_cols, cands) for k, cands in MERGED_FULL_CONFIG_DIMS.items()}
+    bench_col = resolve_col(header_cols, ['benchmark'])
+    missing = [k for k, v in dim_cols.items() if v is None]
+    if period_col is None or ppw_col is None or missing:
+        raise ValueError(f"Could not resolve required column(s) in {path}: "
+                          f"period_start={period_col}, ppw={ppw_col}, missing config dims={missing}")
+
+    usecols = [period_col, ppw_col] + list(dim_cols.values())
+    if bench_col:
+        usecols.append(bench_col)
+    usecols = list(dict.fromkeys(usecols))
+
+    pair_lookup = {}
+    static_sum = {}
+    static_count = {}
+    n_rows = 0
+    periods_needed = {p for p, _ in needed_pairs}
+
+    for chunk in pd.read_csv(path, usecols=usecols, chunksize=chunksize, low_memory=False):
+        n_rows += len(chunk)
+        if bench_col and bench_col in chunk.columns:
+            chunk = chunk[chunk[bench_col].astype(str).str.lower() == bench.lower()]
+            if chunk.empty:
+                continue
+
+        period_nums = chunk[period_col].map(parse_period_numeric)
+        ppw_vals = pd.to_numeric(chunk[ppw_col], errors='coerce')
+        finite = np.isfinite(ppw_vals) & period_nums.notna()
+        if not finite.any():
+            continue
+        sub = chunk.loc[finite]
+        sub_periods = period_nums.loc[finite]
+        sub_ppw = ppw_vals.loc[finite]
+
+        config_key = pd.Series(
+            list(zip(*[sub[dim_cols[k]].map(normalize_component) for k in TARGET_KEYS])),
+            index=sub.index,
+        )
+
+        # static accumulation -- every row, every config
+        for key, val in zip(config_key, sub_ppw):
+            static_sum[key] = static_sum.get(key, 0.0) + val
+            static_count[key] = static_count.get(key, 0) + 1
+
+        # targeted lookup -- only the (period, config) pairs we actually need
+        if periods_needed:
+            in_needed_period = sub_periods.isin(periods_needed)
+            if in_needed_period.any():
+                for period, cfg, val in zip(sub_periods[in_needed_period],
+                                             config_key[in_needed_period],
+                                             sub_ppw[in_needed_period]):
+                    pair = (period, cfg)
+                    if pair in needed_pairs and pair not in pair_lookup:
+                        pair_lookup[pair] = val
+
+    return pair_lookup, static_sum, static_count, n_rows
 
 # ══════════════════════════════════════════════════════════════════════════════
 # DATA FILES
@@ -302,9 +429,6 @@ for bench, path in DATA_FILES.items():
 df_full = pd.concat(frames, ignore_index=True)
 out(f'  Combined: {df_full.shape[0]:,} rows')
 
-# Resolve the actual (possibly inconsistently-named) config columns, then
-# rename onto canonical names so the rest of the script doesn't branch on
-# naming convention.
 resolved_cols, ppw_cols = resolve_config_columns(df_full)
 
 out('  Resolved config columns:')
@@ -327,7 +451,6 @@ for rank in RANKS:
         ALL_CONFIG_COLUMNS.append(canonical_name(k, rank))
     ALL_CONFIG_COLUMNS.append(f'PPW__{rank}')
 
-# Resolve "_prev" (previous-interval actual config) columns for Analysis 4.
 prev_col_map = {}
 for key, candidates in PREV_DIMENSIONS.items():
     prev_col_map[key] = resolve_first_present(df_full, candidates)
@@ -336,26 +459,30 @@ if not prev_config_available:
     out('  [WARN] Previous-config columns not all found — Analysis 4 will be skipped.')
     out(f'    Resolved prev columns: {prev_col_map}')
 
-# preserve columns needed for analysis BEFORE any dropping
 top3_raw = df_full[ALL_CONFIG_COLUMNS + ['benchmark']].copy()
+
+period_start_col = find_col(df_full, 'period_start')
+if period_start_col is None:
+    out('  [WARN] No period_start column found -- cannot join against merged_full for miss rows.')
+    period_raw = None
+else:
+    period_raw = df_full[[period_start_col]].copy()
+    period_raw.columns = ['period_start']
 
 if prev_config_available:
     prev_raw = df_full[list(prev_col_map.values())].copy()
     prev_raw.columns = [f'{key}__prev' for key in prev_col_map.keys()]
 
-# build feature matrix
 df    = df_full.drop(columns=METADATA_COLUMNS_TO_DROP, errors='ignore')
 X_raw = df.drop(columns=ALL_CONFIG_COLUMNS, errors='ignore')
 y_raw = df[TARGET_COLUMNS].copy()
 
 benchmark_col = X_raw['benchmark'].copy() if 'benchmark' in X_raw.columns else None
 
-# encode categoricals
 for col in X_raw.select_dtypes(include=['object']).columns:
     le = LabelEncoder()
     X_raw[col] = le.fit_transform(X_raw[col].astype(str))
 
-# encode targets using saved encoders / numeric coercion
 def safe_encode_series(encoder, series):
     valid = set(encoder.classes_)
     s = series.fillna('none').astype(str).str.strip().str.lower()
@@ -379,6 +506,7 @@ X_scaled    = X_scaled[mask_valid]
 
 y_valid     = y_raw[mask_valid].reset_index(drop=True)
 top3_valid  = top3_raw[mask_valid].reset_index(drop=True)
+period_valid = period_raw[mask_valid].reset_index(drop=True) if period_raw is not None else None
 bench_valid = benchmark_col[mask_valid].reset_index(drop=True) \
               if benchmark_col is not None else None
 if prev_config_available:
@@ -417,7 +545,6 @@ def encode_pf_col(key, series):
 def numeric_col(series):
     return pd.to_numeric(series, errors='coerce').values.astype(float)
 
-# predicted values per dimension, in TARGET_KEYS order
 pred_vals = {}
 for idx, key in enumerate(TARGET_KEYS):
     if key in PREFETCH_KEYS:
@@ -425,13 +552,11 @@ for idx, key in enumerate(TARGET_KEYS):
     else:
         pred_vals[key] = y_pred[:, idx].astype(float)
 
-# ground truth (best) — already encoded/numeric, same path as pred
 true_vals = {}
 for key in TARGET_KEYS:
     col = canonical_name(key, 'best')
     true_vals[key] = y_valid[col].values.astype(int if key in PREFETCH_KEYS else float)
 
-# 2nd / 3rd actual configs, per dimension
 rank_vals = {'2nd': {}, '3rd': {}}
 for rank in ['2nd', '3rd']:
     for key in TARGET_KEYS:
@@ -464,32 +589,15 @@ numpy_exact = (y_valid.values == y_pred).all(axis=1).sum()
 out(f'  Numpy exact check: {numpy_exact:,}  '
     f'{"[OK]" if numpy_exact == match_best.sum() else "[WARN mismatch]"}')
 
-# per-dimension individual accuracy (useful now that there are 7 targets)
 out('  Per-dimension accuracy:')
 for key in TARGET_KEYS:
     acc = (pred_vals[key] == true_vals[key]).mean()
     out(f'    {key:<16} {acc:.4f}')
 
-# PPW % loss — vectorised
 has_ppw = ~np.isnan(ppw_best) & (ppw_best != 0)
 
-pred_ppw = np.where(match_best, ppw_best,
-           np.where(match_2nd,  ppw_2nd,
-           np.where(match_3rd,  ppw_3rd,
-                                ppw_3rd)))
+miss_pred_mask = ~match_top3
 
-pred_ppw_loss_pct = np.where(has_ppw,
-                              (ppw_best - pred_ppw) / ppw_best * 100,
-                              np.nan)
-pred_ppw_loss_pct = np.where(match_best, 0.0, pred_ppw_loss_pct)
-
-# gap best vs 2nd
-has_ppw_2nd      = ~np.isnan(ppw_2nd) & has_ppw
-gap_best_2nd_pct = np.where(has_ppw_2nd,
-                              (ppw_best - ppw_2nd) / ppw_best * 100,
-                              np.nan)
-
-# no-change baseline
 if prev_config_available:
     prev_vals = {}
     for key in TARGET_KEYS:
@@ -503,17 +611,161 @@ if prev_config_available:
     prev_match_2nd  = all_match(prev_vals, rank_vals['2nd'])
     prev_match_3rd  = all_match(prev_vals, rank_vals['3rd'])
     prev_match_top3 = prev_match_best | prev_match_2nd | prev_match_3rd
+    miss_prev_mask = ~prev_match_top3
+else:
+    miss_prev_mask = np.zeros(len(ppw_best), dtype=bool)
 
+# ─────────────────────────────────────────────────────────────────────────
+# Resolve REAL achieved PPW for miss rows (both the model's prediction and,
+# if available, the no-change/previous-config baseline) from
+# merged_full_<bench>.csv, instead of assuming a miss performs like
+# ppw_3rd. Also gather the full per-config PPW aggregation needed to fix
+# Analysis 2's static baselines in the same pass.
+# ─────────────────────────────────────────────────────────────────────────
+section('RESOLVING MISS-ROW PPW FROM merged_full (per benchmark)')
+
+def decode_tuples_for_mask(vals_dict, mask):
+    """Build {row_index: normalized_cfg_tuple} for rows where mask is True,
+    decoding label-encoded prefetch values back to their string labels."""
+    idxs = np.where(mask)[0]
+    if len(idxs) == 0:
+        return {}
+    decoded = {}
+    for key in TARGET_KEYS:
+        arr = vals_dict[key][idxs]
+        if key in PREFETCH_KEYS:
+            decoded[key] = PF_ENCODERS[key].inverse_transform(arr.astype(int))
+        else:
+            decoded[key] = arr.astype(float)
+    out_map = {}
+    for i, row_idx in enumerate(idxs):
+        out_map[int(row_idx)] = tuple(normalize_component(decoded[key][i]) for key in TARGET_KEYS)
+    return out_map
+
+period_nums_all = (period_valid['period_start'].map(parse_period_numeric).values
+                    if period_valid is not None else np.full(len(ppw_best), None))
+
+pred_cfg_by_row = decode_tuples_for_mask(pred_vals, miss_pred_mask)
+prev_cfg_by_row = decode_tuples_for_mask(prev_vals, miss_prev_mask) if prev_config_available else {}
+
+pred_achieved_ppw = np.full(len(ppw_best), np.nan)
+prev_achieved_ppw = np.full(len(ppw_best), np.nan)
+static_configs = {}
+n_pred_miss_resolved = {}
+n_pred_miss_total = {}
+n_prev_miss_resolved = {}
+n_prev_miss_total = {}
+
+bench_array = bench_valid.values if bench_valid is not None else np.array(['unknown'] * len(ppw_best))
+
+for bench in DATA_FILES.keys():
+    bench_row_idx = np.where(bench_array == bench)[0]
+    bench_row_set = set(bench_row_idx.tolist())
+
+    needed_pairs = set()
+    for row_idx, cfg in pred_cfg_by_row.items():
+        if row_idx in bench_row_set and period_nums_all[row_idx] is not None and all(c is not None for c in cfg):
+            needed_pairs.add((period_nums_all[row_idx], cfg))
+    for row_idx, cfg in prev_cfg_by_row.items():
+        if row_idx in bench_row_set and period_nums_all[row_idx] is not None and all(c is not None for c in cfg):
+            needed_pairs.add((period_nums_all[row_idx], cfg))
+
+    path = MERGED_FULL_FILES.get(bench)
+    if path is None or not os.path.exists(path):
+        out(f'  [WARN] {bench}: merged_full file not found at {path} -- miss rows will fall back to '
+            f'ppw_3rd for this benchmark, and Analysis 2 static baselines will be skipped.')
+        continue
+
+    pair_lookup, static_sum, static_count, n_rows_read = process_merged_full(
+        bench, path, needed_pairs, chunksize=args.merged_full_chunksize
+    )
+    out(f'  {bench}: read {n_rows_read:,} rows from {path}, '
+        f'resolved {len(pair_lookup):,}/{len(needed_pairs):,} needed (period, config) pairs, '
+        f'{len(static_count):,} distinct candidate configs seen.')
+
+    n_pred_resolved = n_pred_total = 0
+    for row_idx, cfg in pred_cfg_by_row.items():
+        if row_idx not in bench_row_set:
+            continue
+        n_pred_total += 1
+        val = pair_lookup.get((period_nums_all[row_idx], cfg))
+        if val is not None:
+            pred_achieved_ppw[row_idx] = val
+            n_pred_resolved += 1
+    n_pred_miss_resolved[bench] = n_pred_resolved
+    n_pred_miss_total[bench] = n_pred_total
+
+    n_prev_resolved = n_prev_total = 0
+    for row_idx, cfg in prev_cfg_by_row.items():
+        if row_idx not in bench_row_set:
+            continue
+        n_prev_total += 1
+        val = pair_lookup.get((period_nums_all[row_idx], cfg))
+        if val is not None:
+            prev_achieved_ppw[row_idx] = val
+            n_prev_resolved += 1
+    n_prev_miss_resolved[bench] = n_prev_resolved
+    n_prev_miss_total[bench] = n_prev_total
+
+    if n_pred_total:
+        out(f'  {bench}: {n_pred_resolved}/{n_pred_total} model-miss rows resolved to their real '
+            f'achieved PPW ({n_pred_total - n_pred_resolved} still fall back to ppw_3rd -- their '
+            f'predicted config/period combo was not found in merged_full).')
+    if n_prev_total:
+        out(f'  {bench}: {n_prev_resolved}/{n_prev_total} no-change-baseline-miss rows resolved to their '
+            f'real achieved PPW ({n_prev_total - n_prev_resolved} fall back to ppw_3rd).')
+
+    # Analysis 2 fix: true per-config average PPW across the WHOLE benchmark
+    # (every period, this exact config), not just periods where the config
+    # happened to be in the top-3.
+    if static_count:
+        means = {k: static_sum[k] / static_count[k] for k in static_count}
+        best_key = max(means, key=means.get)
+        worst_key = min(means, key=means.get)
+        static_configs[bench] = {
+            'best_static':          best_key,
+            'worst_static':         worst_key,
+            'best_static_avg_ppw':  means[best_key],
+            'worst_static_avg_ppw': means[worst_key],
+            'best_static_n_samples': static_count[best_key],
+            'worst_static_n_samples': static_count[worst_key],
+            'max_n_samples':        max(static_count.values()),
+            'optimal_avg_ppw':      np.nanmean(ppw_best[bench_row_idx]) if len(bench_row_idx) else np.nan,
+        }
+        out(f'  {bench}: best_static  = {best_key}  (avg PPW={means[best_key]:.4e}, '
+            f'n={static_count[best_key]:,}/{static_configs[bench]["max_n_samples"]:,} periods)')
+        out(f'  {"":10}  worst_static = {worst_key}  (avg PPW={means[worst_key]:.4e}, '
+            f'n={static_count[worst_key]:,})')
+        out(f'  {"":10}  (order: {TARGET_KEYS})')
+
+# fill in pred_ppw / prev_ppw: real achieved value where resolved, else the
+# original top-3-based logic (exact/2nd/3rd match, or ppw_3rd as last-resort
+# fallback only when a genuine miss couldn't be resolved via merged_full)
+pred_ppw = np.where(match_best, ppw_best,
+           np.where(match_2nd,  ppw_2nd,
+           np.where(match_3rd,  ppw_3rd,
+           np.where(~np.isnan(pred_achieved_ppw), pred_achieved_ppw, ppw_3rd))))
+
+pred_ppw_loss_pct = np.where(has_ppw,
+                              (ppw_best - pred_ppw) / ppw_best * 100,
+                              np.nan)
+pred_ppw_loss_pct = np.where(match_best, 0.0, pred_ppw_loss_pct)
+
+has_ppw_2nd      = ~np.isnan(ppw_2nd) & has_ppw
+gap_best_2nd_pct = np.where(has_ppw_2nd,
+                              (ppw_best - ppw_2nd) / ppw_best * 100,
+                              np.nan)
+
+if prev_config_available:
     prev_ppw = np.where(prev_match_best, ppw_best,
                np.where(prev_match_2nd,  ppw_2nd,
                np.where(prev_match_3rd,  ppw_3rd,
-                                         ppw_3rd)))
+               np.where(~np.isnan(prev_achieved_ppw), prev_achieved_ppw, ppw_3rd))))
     prev_ppw_loss_pct = np.where(has_ppw,
                                   (ppw_best - prev_ppw) / ppw_best * 100,
                                   np.nan)
     prev_ppw_loss_pct = np.where(prev_match_best, 0.0, prev_ppw_loss_pct)
 
-# assemble final results dataframe
 results_df = pd.DataFrame({
     'benchmark':         bench_valid.values if bench_valid is not None else 'unknown',
     'best_ppw':          ppw_best,
@@ -541,51 +793,9 @@ def subset(bench):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 5.  STATIC CONFIGS  (groupby over all 7 dims — no iterrows)
+# 5.  STATIC CONFIGS  -- already computed above (from merged_full, in the same
+# pass as the miss-row PPW resolution). static_configs is populated there.
 # ══════════════════════════════════════════════════════════════════════════════
-section('COMPUTING STATIC BASELINES')
-
-BEST_COLS = [canonical_name(k, 'best') for k in TARGET_KEYS]
-
-static_configs = {}
-for bench in DATA_FILES.keys():
-    mask_b   = top3_valid['benchmark'] == bench
-    bench_df = top3_valid[mask_b].copy()
-    if bench_df.empty:
-        continue
-    bench_df['_ppw'] = pd.to_numeric(bench_df['PPW__best'], errors='coerce')
-    bench_df = bench_df.dropna(subset=['_ppw'])
-    if bench_df.empty:
-        continue
-
-    # NaN in prefetcher_core1_best means both cores share the same setting
-    pf1_col = canonical_name('prefetch_core1', 'best')
-    pf0_col = canonical_name('prefetch_core0', 'best')
-    bench_df[pf1_col] = bench_df[pf1_col].fillna(bench_df[pf0_col])
-    # NaN in L2/core1 similarly falls back to core0 (symmetric config)
-    l2_1_col = canonical_name('l2_core1', 'best')
-    l2_0_col = canonical_name('l2_core0', 'best')
-    bench_df[l2_1_col] = bench_df[l2_1_col].fillna(bench_df[l2_0_col])
-
-    grp = (bench_df
-           .groupby(BEST_COLS, dropna=False)['_ppw']
-           .sum()
-           .reset_index())
-
-    best_row  = grp.loc[grp['_ppw'].idxmax()]
-    worst_row = grp.loc[grp['_ppw'].idxmin()]
-    n_periods = len(bench_df)
-
-    static_configs[bench] = {
-        'best_static':          tuple(best_row[c] for c in BEST_COLS),
-        'worst_static':         tuple(worst_row[c] for c in BEST_COLS),
-        'best_static_avg_ppw':  float(best_row['_ppw'])  / n_periods,
-        'worst_static_avg_ppw': float(worst_row['_ppw']) / n_periods,
-        'optimal_avg_ppw':      bench_df['_ppw'].mean(),
-    }
-    out(f'  {bench}: best_static  = {static_configs[bench]["best_static"]}')
-    out(f'  {"":10}  worst_static = {static_configs[bench]["worst_static"]}')
-    out(f'  {"":10}  (order: {TARGET_KEYS})')
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -593,9 +803,6 @@ for bench in DATA_FILES.keys():
 # ══════════════════════════════════════════════════════════════════════════════
 out(f'\n  Analysis run: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}   |   Model: {ts}')
 
-# ─────────────────────────────────────────────────────────────────────────────
-# ANALYSIS 1 — PPW % LOSS
-# ─────────────────────────────────────────────────────────────────────────────
 section('ANALYSIS 1 — PPW % LOSS  (Model Prediction vs Optimal)')
 
 for bench in benchmarks:
@@ -620,9 +827,6 @@ for bench in benchmarks:
     loss_buckets(df_b['pred_ppw_loss_pct'], n, label='Model prediction ')
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# ANALYSIS 2 — STATIC BASELINE COMPARISON
-# ─────────────────────────────────────────────────────────────────────────────
 section('ANALYSIS 2 — STATIC BASELINE COMPARISON')
 out('  Metric: average PPW per period  (higher = better)')
 out()
@@ -669,9 +873,6 @@ for bench, sc in sorted(static_configs.items()):
     out(f'    {"":<12}  worst: {sc["worst_static"]}')
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# ANALYSIS 3 — BEST vs 2ND-BEST GAP
-# ─────────────────────────────────────────────────────────────────────────────
 section('ANALYSIS 3 — GAP BETWEEN BEST AND 2ND-BEST CONFIG')
 out('  How much PPW do you lose by picking 2nd instead of 1st?')
 out('  (Small gap -> 2nd is nearly as good; large gap -> 1st is critical)')
@@ -710,9 +911,6 @@ for bench in benchmarks:
         out(f'    Corr(gap, exact_match): {corr:.3f}  {direction}')
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# ANALYSIS 4 — NO-CHANGE BASELINE
-# ─────────────────────────────────────────────────────────────────────────────
 section('ANALYSIS 4 — NO-CHANGE BASELINE  (Keep Previous Config)')
 out("  If we always use the previous period's config instead of predicting,")
 out('  how often is it still in the top 3, and how much PPW do we lose?')
@@ -761,12 +959,8 @@ else:
             f'(delta = {abs(m_loss - nc_loss):.2f}%)')
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# ANALYSIS 5 - INFERENCE & RECONFIGURATION OVERHEAD
-# ══════════════════════════════════════════════════════════════════════════════
 section('ANALYSIS 5 - INFERENCE & RECONFIGURATION OVERHEAD')
 
-# GAINESTOWN/McPAT PARAMETERS (from power.xml, 45nm HP)
 TECH_PARAMS = {
     'tech_node_nm': 45,
     'clock_rate_mhz': 2660,
@@ -802,7 +996,6 @@ out(f"    E_gate_per_l2_kb:       {TECH_PARAMS['E_gate_per_l2_kb_pJ']:.3f} pJ")
 out(f"    E_gate_per_l3_kb:       {TECH_PARAMS['E_gate_per_l3_kb_pJ']:.3f} pJ")
 out(f"    E_gate_per_prefetcher:  {TECH_PARAMS['E_gate_per_prefetcher_pJ']:.3f} pJ")
 
-# Load cost analysis CSV if provided
 if args.cost_csv and os.path.exists(args.cost_csv):
     out()
     out(f"  Cost analysis loaded from: {args.cost_csv}")
@@ -824,7 +1017,6 @@ if args.cost_csv and os.path.exists(args.cost_csv):
         out('  RECONFIGURATION COST (only on config change):')
         out('  ' + '-' * 50)
 
-        # Component breakdown — now covers L2 x2, L3, BTB x2, Prefetcher x2
         out('  Component     | Energy/change | % intervals changed')
         out('  ' + '-' * 55)
 
@@ -853,7 +1045,6 @@ if args.cost_csv and os.path.exists(args.cost_csv):
         out(f"    Avg per change:      {avg_reconfig:.2f} pJ" if n_changes > 0 else "    Avg per change:      N/A (no changes)")
         out(f"    Avg per interval:    {total_reconfig/(len(cost_df)-1):.2f} pJ" if len(cost_df) > 1 else "    N/A")
 
-    # Net PPW impact
     if 'net_ppw' in cost_df.columns and 'PPW_best' in cost_df.columns:
         raw_ppw = cost_df['PPW_best'].dropna().mean()
         net_ppw = cost_df['net_ppw'].dropna().mean()
@@ -872,9 +1063,6 @@ else:
     out('  Run costAnalysis.py first: python costAnalysis.py --benchmark <name> --model-dir saved_models/')
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# SAVE REPORT
-# ══════════════════════════════════════════════════════════════════════════════
 report_ts   = datetime.now().strftime('%Y%m%d_%H%M%S')
 report_path = os.path.join(args.output_dir, f'analysis_report_{report_ts}.txt')
 with open(report_path, 'w') as f:
