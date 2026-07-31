@@ -543,12 +543,21 @@ def compute_matched_metrics(sweep_csv, predicted_configs_by_period, chunksize=20
 
         # Diagnostic: if best_static_mean ends up > oracle_mean, actually
         # check (not just flag) how often the winning config's own ppw_prev
-        # exceeds that period's oracle label, across the matched periods.
+        # exceeds that period's oracle label. IMPORTANT: this must be
+        # checked over the SAME period universe static accumulation itself
+        # used -- every period with a finite oracle value (gated by
+        # row_has_finite_oracle above), NOT the smaller achieved-matched
+        # set, which additionally requires the model's predicted config to
+        # be present and is typically for a DIFFERENT config than whichever
+        # one wins best-static. Using the smaller set would silently
+        # under-sample the check relative to what the mean was computed
+        # over.
         static_diag = None
         if oracle_mean and best_static_mean > oracle_mean:
             static_diag = diagnose_static_vs_oracle(
-                sweep_csv, best_key, oracle_by_period, matched_periods, chunksize=chunksize
+                sweep_csv, best_key, oracle_by_period, list(oracle_by_period.keys()), chunksize=chunksize
             )
+            static_diag['winner_n_samples_in_mean'] = static_count[best_key]
 
     return {
         'achieved_ppw_mean': achieved_mean_matched,
@@ -652,8 +661,10 @@ def main():
               f"{format_config(metrics['best_static_config'])}")
         diag = metrics.get('static_vs_oracle_diagnostic')
         if diag:
-            print(f"  [DIAGNOSTIC] Winning static config's own measured PPW exceeds its period's oracle "
-                  f"label in {diag['n_exceeds']}/{diag['n_checked']} matched periods "
+            print(f"  [DIAGNOSTIC] Winning static config's mean was computed over "
+                  f"{diag.get('winner_n_samples_in_mean', '?')} period(s). Of the "
+                  f"{diag['n_checked']} that also have a checkable oracle value, its own measured PPW "
+                  f"exceeds that period's oracle label in {diag['n_exceeds']} "
                   f"({diag['frac_exceeds']*100:.1f}%), avg excess when it happens: "
                   f"{diag['avg_excess_pct_when_exceeds']:.1f}%.")
             if diag['frac_exceeds'] is not None and diag['frac_exceeds'] > 0.2:
