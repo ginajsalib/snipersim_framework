@@ -309,7 +309,7 @@ def compute_matched_metrics(sweep_csv, predicted_by_period, chunksize=200_000):
             usecols=oracle_usecols,
             chunksize=chunksize):
 
-        periods = pd.to_numeric(chunk[period_col], errors="coerce")
+        periods = chunk[period_col].map(parse_period_numeric)
         oracle_vals = pd.to_numeric(chunk[oracle_col], errors="coerce")
 
         finite = np.isfinite(oracle_vals)
