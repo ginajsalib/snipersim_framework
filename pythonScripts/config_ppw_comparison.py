@@ -253,151 +253,243 @@ def load_predicted_config_by_period(predictions_csv, benchmark):
 
 def compute_matched_metrics(sweep_csv, predicted_by_period, chunksize=200_000):
     """
-    Single streaming pass over the sweep file.
+    Two-pass streaming implementation.
 
-    Join key: predictions' period_start (parsed to its numeric instruction
-    id) == sweep's 'period_start_val_prev' -- the numeric field marking the
-    start of the interval that this row's '*_prev' columns (ppw_prev,
-    config, etc.) actually describe. This is what makes 'ppw_prev' the
-    genuine previous-interval measurement the naming implies, rather than
-    an approximation via the row's own (different) 'period_start'.
+    Pass 1
+    ------
+    Build:
+        oracle_by_period[period_start] = PPW_best
 
-    For each row where period_start_val_prev matches a predicted interval:
-      - If that row's '*_prev' config matches this period's model-predicted
-        config, its 'ppw_prev' value IS the achieved PPW for that interval.
-      - 'PPW_best' on that same row is the period's oracle value (repeated
-        across every config-row for the period).
-      - Every row also feeds the best-static accumulation for its own
-        config, restricted to periods with a finite oracle value, so all
-        three metrics end up computed over the same period universe and
-        achieved/static can never mathematically exceed oracle.
+    since PPW_best belongs to the row's own period.
+
+    Pass 2
+    ------
+    Join predictions.period_start with
+        sweep.period_start_val_prev
+
+    to recover the achieved PPW of the model's predicted config.
+
+    Oracle values are looked up from oracle_by_period rather than taken from the
+    achieved row, because PPW_best is shifted one checkpoint relative to
+    period_start_val_prev.
     """
+
     header = pd.read_csv(sweep_csv, nrows=0)
     columns = list(header.columns)
 
+    period_col = resolve_first_present(columns, SWEEP_PERIOD_CANDIDATES)
     prev_period_col = resolve_first_present(columns, SWEEP_PREV_PERIOD_CANDIDATES)
     achieved_col = resolve_first_present(columns, SWEEP_ACHIEVED_PPW_CANDIDATES)
     oracle_col = resolve_first_present(columns, SWEEP_ORACLE_PPW_CANDIDATES)
+
     dim_cols = {}
     for key, cands in SWEEP_CONFIG_DIMENSIONS.items():
         col = resolve_first_present(columns, cands)
         if col is None:
-            raise ValueError(f"Could not resolve sweep column for dimension '{key}' in {sweep_csv}. "
-                              f"Columns available: {columns}")
+            raise ValueError(
+                f"Could not resolve sweep column for '{key}' in {sweep_csv}"
+            )
         dim_cols[key] = col
 
-    if prev_period_col is None or achieved_col is None or oracle_col is None:
+    if None in (period_col, prev_period_col, achieved_col, oracle_col):
         raise ValueError(
-            f"Missing required column(s) in {sweep_csv}. "
-            f"period_start_val_prev={prev_period_col}, ppw_prev={achieved_col}, oracle PPW_best={oracle_col}"
+            "Missing one or more required sweep columns."
         )
 
-    usecols = [prev_period_col, achieved_col, oracle_col] + list(dim_cols.values())
-    usecols = list(dict.fromkeys(usecols))
+    # ------------------------------------------------------------------
+    # PASS 1 : build oracle lookup using period_start
+    # ------------------------------------------------------------------
 
-    oracle_by_period = {}     # period_num -> oracle PPW (finite only)
-    achieved_by_period = {}   # period_num -> achieved PPW of the model's predicted config (finite only)
+    oracle_by_period = {}
+
+    oracle_usecols = [period_col, oracle_col]
+
+    for chunk in pd.read_csv(
+            sweep_csv,
+            usecols=oracle_usecols,
+            chunksize=chunksize):
+
+        periods = pd.to_numeric(chunk[period_col], errors="coerce")
+        oracle_vals = pd.to_numeric(chunk[oracle_col], errors="coerce")
+
+        finite = np.isfinite(oracle_vals)
+
+        for p, val in zip(periods[finite], oracle_vals[finite]):
+            if p not in oracle_by_period:
+                oracle_by_period[p] = val
+
+    # ------------------------------------------------------------------
+    # PASS 2 : achieved + static
+    # ------------------------------------------------------------------
+
+    achieved_by_period = {}
+
     static_sum = {}
     static_count = {}
+
     n_rows = 0
     n_static_dropped = 0
     sweep_periods_seen = set()
 
-    for chunk in pd.read_csv(sweep_csv, usecols=usecols, chunksize=chunksize):
+    usecols = (
+        [prev_period_col, achieved_col]
+        + list(dim_cols.values())
+    )
+
+    usecols = list(dict.fromkeys(usecols))
+
+    for chunk in pd.read_csv(
+            sweep_csv,
+            usecols=usecols,
+            chunksize=chunksize):
+
         n_rows += len(chunk)
-        period_nums = pd.to_numeric(chunk[prev_period_col], errors='coerce')
+
+        period_nums = pd.to_numeric(
+            chunk[prev_period_col],
+            errors="coerce"
+        )
+
         sweep_periods_seen.update(period_nums.dropna().unique())
 
         in_predicted = period_nums.isin(predicted_by_period.keys())
+
         if not in_predicted.any():
             continue
+
         sub = chunk.loc[in_predicted]
         sub_periods = period_nums.loc[in_predicted]
 
-        oracle_vals = pd.to_numeric(sub[oracle_col], errors='coerce')
-        finite_oracle = np.isfinite(oracle_vals)
-        for period, val in zip(sub_periods[finite_oracle], oracle_vals[finite_oracle]):
-            if period not in oracle_by_period:
-                oracle_by_period[period] = val
+        # Only evaluate periods that actually have an oracle
+        row_has_oracle = sub_periods.isin(oracle_by_period.keys())
 
-        # restrict further accumulation (achieved-match + static) to rows
-        # whose period has a finite oracle value -- keeps achieved and
-        # static on a subset of oracle's period set, guaranteeing the
-        # inequality
-        row_has_finite_oracle = sub_periods.isin(oracle_by_period.keys())
-        sub2 = sub.loc[row_has_finite_oracle]
-        sub2_periods = sub_periods.loc[row_has_finite_oracle]
+        if not row_has_oracle.any():
+            continue
+
+        sub = sub.loc[row_has_oracle]
+        sub_periods = sub_periods.loc[row_has_oracle]
 
         config_key = pd.Series(
-            list(zip(*[sub2[dim_cols[k]].map(normalize_component) for k in SWEEP_CONFIG_DIMENSIONS])),
-            index=sub2.index,
+            list(
+                zip(
+                    *[
+                        sub[dim_cols[k]].map(normalize_component)
+                        for k in SWEEP_CONFIG_DIMENSIONS
+                    ]
+                )
+            ),
+            index=sub.index,
         )
-        achieved_vals = pd.to_numeric(sub2[achieved_col], errors='coerce')
+
+        achieved_vals = pd.to_numeric(
+            sub[achieved_col],
+            errors="coerce"
+        )
+
         finite_achieved = np.isfinite(achieved_vals)
+
         n_static_dropped += int((~finite_achieved).sum())
 
-        # --- achieved: rows whose config matches this period's predicted config ---
         is_predicted_config = pd.Series(
-            [config_key.iat[i] == predicted_by_period.get(sub2_periods.iat[i])
-             for i in range(len(sub2))],
-            index=sub2.index,
+            [
+                config_key.iat[i]
+                == predicted_by_period.get(sub_periods.iat[i])
+                for i in range(len(sub))
+            ],
+            index=sub.index,
         )
+
         match_mask = is_predicted_config & finite_achieved
-        for period, val in zip(sub2_periods[match_mask], achieved_vals[match_mask]):
+
+        for period, val in zip(
+                sub_periods[match_mask],
+                achieved_vals[match_mask]):
+
             if period not in achieved_by_period:
                 achieved_by_period[period] = val
 
-        # --- best static: every candidate config's own measured PPW ---
-        for key, val in zip(config_key[finite_achieved], achieved_vals[finite_achieved]):
+        # accumulate every config for best-static
+        for key, val in zip(
+                config_key[finite_achieved],
+                achieved_vals[finite_achieved]):
+
             static_sum[key] = static_sum.get(key, 0.0) + val
             static_count[key] = static_count.get(key, 0) + 1
 
-    # matched periods = finite oracle AND the predicted config was actually
-    # found (with a finite measurement) in the sweep for that period
-    matched_periods = [p for p in oracle_by_period if p in achieved_by_period]
+    # ------------------------------------------------------------------
+    # Final statistics
+    # ------------------------------------------------------------------
+
+    matched_periods = [
+        p for p in achieved_by_period
+        if p in oracle_by_period
+    ]
+
     n_matched = len(matched_periods)
 
-    periods_predicted_not_in_sweep = set(predicted_by_period.keys()) - sweep_periods_seen
-    if periods_predicted_not_in_sweep:
-        print(f"  [WARN] {len(periods_predicted_not_in_sweep)} period(s) from the predictions file "
-              f"were not found at all in the sweep file (period_start format mismatch?).")
+    periods_predicted_not_in_sweep = (
+        set(predicted_by_period.keys())
+        - sweep_periods_seen
+    )
 
-    periods_config_not_found = (set(predicted_by_period.keys()) & set(oracle_by_period.keys())) - set(achieved_by_period.keys())
+    if periods_predicted_not_in_sweep:
+        print(
+            f"  [WARN] {len(periods_predicted_not_in_sweep)} predicted "
+            f"period(s) were not found in the sweep."
+        )
+
+    periods_config_not_found = (
+        set(predicted_by_period.keys())
+        & set(oracle_by_period.keys())
+        - set(achieved_by_period.keys())
+    )
+
     if periods_config_not_found:
-        print(f"  [WARN] {len(periods_config_not_found)} period(s) had a finite oracle value but the "
-              f"model's predicted config was not found (or non-finite) among that period's swept rows "
-              f"-- excluded from the achieved/oracle comparison.")
+        print(
+            f"  [WARN] {len(periods_config_not_found)} period(s) had an "
+            f"oracle but no matching predicted configuration."
+        )
 
     if n_matched == 0:
         oracle_mean = np.nan
-        achieved_mean_matched = np.nan
+        achieved_mean = np.nan
     else:
-        oracle_mean = float(np.mean([oracle_by_period[p] for p in matched_periods]))
-        achieved_mean_matched = float(np.mean([achieved_by_period[p] for p in matched_periods]))
+        oracle_mean = np.mean(
+            [oracle_by_period[p] for p in matched_periods]
+        )
+        achieved_mean = np.mean(
+            [achieved_by_period[p] for p in matched_periods]
+        )
 
     if not static_count:
         best_static_mean = np.nan
         best_static_config = None
         n_candidate_configs = 0
     else:
-        means = {k: static_sum[k] / static_count[k] for k in static_count}
+        means = {
+            k: static_sum[k] / static_count[k]
+            for k in static_count
+        }
+
         best_key = max(means, key=means.get)
+
         best_static_mean = means[best_key]
         n_candidate_configs = len(means)
-        best_static_config = dict(zip(SWEEP_CONFIG_DIMENSIONS.keys(), best_key))
+
+        best_static_config = dict(
+            zip(SWEEP_CONFIG_DIMENSIONS.keys(), best_key)
+        )
 
     return {
-        'achieved_ppw_mean': achieved_mean_matched,
-        'oracle_ppw_mean': oracle_mean,
-        'best_static_ppw_mean': best_static_mean,
-        'best_static_config': best_static_config,
-        'n_matched_periods': n_matched,
-        'n_candidate_configs': n_candidate_configs,
-        'sweep_n_rows': n_rows,
-        'sweep_n_dropped_nonfinite': n_static_dropped,
+        "achieved_ppw_mean": achieved_mean,
+        "oracle_ppw_mean": oracle_mean,
+        "best_static_ppw_mean": best_static_mean,
+        "best_static_config": best_static_config,
+        "n_matched_periods": n_matched,
+        "n_candidate_configs": n_candidate_configs,
+        "sweep_n_rows": n_rows,
+        "sweep_n_dropped_nonfinite": n_static_dropped,
     }
-
-
 def format_config(cfg):
     if cfg is None:
         return ""
