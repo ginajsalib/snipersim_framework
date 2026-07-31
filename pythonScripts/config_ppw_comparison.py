@@ -1,21 +1,29 @@
 """
 config_ppw_comparison.py
 =========================
-Compare achieved PPW (the model's predicted-config output), oracle PPW
-(best-possible-per-interval, from the full config sweep), and best-static
-PPW (single fixed config for the whole run, from the full config sweep)
-across multiple benchmarks. Produces a summary CSV and a comparison chart.
+Compare achieved PPW (what the model's predicted config actually measured),
+oracle PPW (best-possible-per-interval), and best-static PPW (single fixed
+config for the whole run) across multiple benchmarks. Produces a summary CSV
+and a comparison chart.
 
 Data sources per benchmark:
   --predictions <path>   Output of predict_config.py. One row per interval.
-                          Its 'PPW_best' column is the ACHIEVED PPW of the
-                          model's predicted config for that interval.
+                          Its lowercase, underscore-separated columns
+                          (l2_core0, l2_core1, l3, btb_core0, btb_core1,
+                          prefetch_core0, prefetch_core1) are the model's
+                          PREDICTED config for that interval. NOTE: this
+                          file's own 'PPW_best' column is NOT used as
+                          achieved PPW -- it is the oracle label carried
+                          through from training (it sits next to a separate,
+                          unprefixed camelCase config block -- L2core0,
+                          btbCore0, prefetcher -- which is the oracle-best
+                          config, not the prediction).
   --sweep <path>         train_with_top3_<bench>.csv. One row per
                           (period, candidate config) pair.
                             - 'ppw_prev' = that candidate config's own
-                              ACHIEVED PPW during that period (despite the
-                              "_prev" naming -- it is not "previous
-                              interval", it's this row's own config/period).
+                              measured PPW during that period (despite the
+                              "_prev" naming -- it is this row's own
+                              period/config measurement).
                             - 'PPW_best' = the ORACLE best-possible PPW for
                               that period, repeated on every config-row for
                               that period.
@@ -25,13 +33,14 @@ Data sources per benchmark:
                               btbCore0_prev, btbCore1_prev) identify which
                               candidate config that row swept.
 
-Computed per benchmark:
-  Achieved (Model) PPW  = mean of predictions['PPW_best'], finite values only
-  Oracle PPW            = mean of sweep's per-period PPW_best (deduplicated
-                           by period_start), finite values only
-  Best Static PPW       = max over candidate configs of
-                           (mean of sweep['ppw_prev'] for that config,
-                           finite values only)
+Computed per benchmark, over a common matched set of periods (finite oracle
++ the model's predicted config actually found with a finite measurement):
+  Achieved (Model) PPW  = mean of ppw_prev from the sweep row whose config
+                           matches the model's predicted config for that
+                           period
+  Oracle PPW             = mean of the sweep's per-period PPW_best
+  Best Static PPW        = max over candidate configs of
+                            (mean of that config's ppw_prev across periods)
 
 Usage:
     python config_ppw_comparison.py \\
@@ -87,7 +96,64 @@ def resolve_first_present(columns, candidates, exclude_substr=None):
 PRED_PPW_CANDIDATES = ['PPW_best', 'PPW__best', 'ppw_best']
 PRED_PERIOD_CANDIDATES = ['period_start']
 
+# The predicted (model-chosen) config columns in predictions.csv are the
+# lowercase, underscore-separated ones with NO suffix -- e.g. 'l2_core0'.
+# This predictions file *also* contains a separate unprefixed camelCase
+# block ('L2core0', 'btbCore0', 'prefetcher') which normalizes to the exact
+# same key as 'l2_core0' under the generic fuzzy matcher above, so for THIS
+# specific resolution we require an exact, case-sensitive name match first
+# -- fuzzy/normalized matching would silently pick either block.
+PRED_CONFIG_EXACT_CANDIDATES = {
+    'l2_core0':       ['l2_core0'],
+    'l2_core1':       ['l2_core1'],
+    'l3':             ['l3'],
+    'btb_core0':      ['btb_core0'],
+    'btb_core1':      ['btb_core1'],
+    'prefetch_core0': ['prefetch_core0'],
+    'prefetch_core1': ['prefetch_core1'],
+}
+
+
+def resolve_predicted_config_columns(columns):
+    """Resolve the model's predicted-config columns using an exact,
+    case-sensitive match first (see note above); only falls back to fuzzy
+    normalized matching -- with a loud warning -- if no exact match exists,
+    since fuzzy matching here risks silently picking the oracle-label block
+    instead of the predicted-config block."""
+    resolved = {}
+    used_fuzzy = []
+    for key, exact_names in PRED_CONFIG_EXACT_CANDIDATES.items():
+        col = next((c for c in exact_names if c in columns), None)
+        if col is None:
+            col = find_col(columns, exact_names[0], exclude_substr='prev')
+            if col is not None:
+                used_fuzzy.append((key, col))
+        resolved[key] = col
+    if used_fuzzy:
+        print(f"  [WARN] Predicted-config columns resolved via fuzzy fallback (verify these are correct, "
+              f"not the oracle-label columns): {used_fuzzy}")
+    missing = [k for k, v in resolved.items() if v is None]
+    if missing:
+        raise ValueError(f"Could not resolve predicted-config column(s): {missing}. Columns available: {columns}")
+    return resolved
+
+
+def normalize_component(val):
+    """Normalize one config-dimension value for equality comparison across
+    files that may format the same value as '512', '512.0', 512.0, 'None',
+    'none', etc."""
+    try:
+        f = float(val)
+        if np.isnan(f):
+            return None
+        return round(f, 6)
+    except (TypeError, ValueError):
+        s = str(val).strip().lower()
+        return None if s in ('nan', '') else s
+
+
 SWEEP_PERIOD_CANDIDATES = ['period_start']
+SWEEP_PREV_PERIOD_CANDIDATES = ['period_start_val_prev']
 SWEEP_ACHIEVED_PPW_CANDIDATES = ['ppw_prev']
 SWEEP_ORACLE_PPW_CANDIDATES = ['PPW_best', 'PPW__best']
 
@@ -102,6 +168,28 @@ SWEEP_CONFIG_DIMENSIONS = {
 }
 
 
+def parse_period_numeric(period_val):
+    """Extract the numeric instruction-count id from a period label.
+    Handles 'periodicins-100000002' -> 100000002, bare numbers (int/float/
+    numeric string) -> as-is, and non-numeric sentinels ('roi-end',
+    'roi-begin', etc.) -> None (unmatchable)."""
+    if period_val is None:
+        return None
+    if isinstance(period_val, (int, float)) and not isinstance(period_val, bool):
+        return None if (isinstance(period_val, float) and np.isnan(period_val)) else float(period_val)
+    s = str(period_val).strip()
+    if s.lower() in ('nan', ''):
+        return None
+    if '-' in s:
+        tail = s.rsplit('-', 1)[-1]
+        if tail.replace('.', '', 1).isdigit():
+            return float(tail)
+        return None  # e.g. 'roi-end', 'roi-begin' -- no numeric id
+    if s.replace('.', '', 1).isdigit():
+        return float(s)
+    return None
+
+
 def _finite(series):
     s = pd.to_numeric(series, errors='coerce')
     return s[np.isfinite(s)]
@@ -111,15 +199,18 @@ def _finite(series):
 # PER-BENCHMARK COMPUTATION
 # ==============================================================================
 
-def load_achieved_by_period(predictions_csv, benchmark):
-    """Load the predictions file and return {period_start: achieved_ppw}
-    for finite values only, plus basic counts. Filters to `benchmark` if a
-    benchmark column is present and contains other values."""
+def load_predicted_config_by_period(predictions_csv, benchmark):
+    """Load the predictions file and return {period_start: normalized_config_tuple}
+    -- the model's actual predicted config per interval -- plus basic counts.
+    Filters to `benchmark` if a benchmark column is present and contains
+    other values. Does NOT use predictions.csv's own 'PPW_best' column as
+    achieved PPW -- that column is the oracle label carried through from
+    training, not a measurement of what the predicted config achieved (see
+    header note)."""
     df = pd.read_csv(predictions_csv)
-    ppw_col = resolve_first_present(df.columns, PRED_PPW_CANDIDATES)
     period_col = resolve_first_present(df.columns, PRED_PERIOD_CANDIDATES)
-    if ppw_col is None or period_col is None:
-        raise ValueError(f"Missing PPW or period column in {predictions_csv}. Columns: {list(df.columns)}")
+    if period_col is None:
+        raise ValueError(f"No period column found in {predictions_csv}. Columns: {list(df.columns)}")
 
     bench_col = find_col(df.columns, 'benchmark')
     if bench_col is not None:
@@ -129,48 +220,62 @@ def load_achieved_by_period(predictions_csv, benchmark):
                   f"-- filtering to only '{benchmark}'.")
             df = df[df[bench_col] == benchmark]
 
-    ppw_vals = pd.to_numeric(df[ppw_col], errors='coerce')
-    finite = np.isfinite(ppw_vals)
-    n_dropped = int((~finite).sum())
+    cfg_cols = resolve_predicted_config_columns(list(df.columns))
 
-    # If the same period appears more than once, keep the first -- flag it,
-    # since predict_config.py output is expected to be one row per interval.
-    dupe_periods = df.loc[finite, period_col].duplicated().sum()
+    dupe_periods = df[period_col].duplicated().sum()
     if dupe_periods:
         print(f"  [WARN] {predictions_csv} has {dupe_periods} duplicate period_start value(s) "
-              f"among finite rows -- keeping the first occurrence of each.")
+              f"-- keeping the first occurrence of each.")
 
-    achieved_by_period = {}
-    for period, val in zip(df.loc[finite, period_col], ppw_vals[finite]):
-        if period not in achieved_by_period:
-            achieved_by_period[period] = val
+    predicted_by_period = {}
+    n_unparseable_period = 0
+    for _, row in df.iterrows():
+        period_num = parse_period_numeric(row[period_col])
+        if period_num is None:
+            n_unparseable_period += 1
+            continue
+        if period_num in predicted_by_period:
+            continue
+        cfg_tuple = tuple(normalize_component(row[cfg_cols[k]]) for k in SWEEP_CONFIG_DIMENSIONS)
+        if any(c is None for c in cfg_tuple):
+            continue  # incomplete predicted config for this row, skip
+        predicted_by_period[period_num] = cfg_tuple
 
-    return achieved_by_period, {
-        'achieved_n_intervals': len(df),
-        'achieved_n_finite': len(achieved_by_period),
-        'achieved_n_dropped_nonfinite': n_dropped,
+    if n_unparseable_period:
+        print(f"  [WARN] {n_unparseable_period} row(s) in {predictions_csv} had a non-numeric "
+              f"period_start (e.g. 'roi-end') and could not be joined -- excluded.")
+
+    return predicted_by_period, {
+        'n_intervals': len(df),
+        'n_with_complete_predicted_config': len(predicted_by_period),
     }
 
 
-def compute_matched_metrics(sweep_csv, achieved_by_period, chunksize=200_000):
+def compute_matched_metrics(sweep_csv, predicted_by_period, chunksize=200_000):
     """
-    Single streaming pass over the sweep file, restricted throughout to the
-    periods present in achieved_by_period (finite achieved value) -- this is
-    what guarantees achieved_mean and best_static_mean can never
-    mathematically exceed oracle_mean: all three are averaged over the exact
-    same set of periods, and at every one of those periods, oracle is by
-    definition >= any single candidate config's value (including the one
-    the model picked, and including whichever config ends up "best static").
+    Single streaming pass over the sweep file.
 
-    A period only enters oracle_by_period (and therefore the matched set) if
-    its PPW_best value in the sweep file is itself finite -- so all three
-    metrics end up computed over: periods with a finite achieved value AND a
-    finite oracle value.
+    Join key: predictions' period_start (parsed to its numeric instruction
+    id) == sweep's 'period_start_val_prev' -- the numeric field marking the
+    start of the interval that this row's '*_prev' columns (ppw_prev,
+    config, etc.) actually describe. This is what makes 'ppw_prev' the
+    genuine previous-interval measurement the naming implies, rather than
+    an approximation via the row's own (different) 'period_start'.
+
+    For each row where period_start_val_prev matches a predicted interval:
+      - If that row's '*_prev' config matches this period's model-predicted
+        config, its 'ppw_prev' value IS the achieved PPW for that interval.
+      - 'PPW_best' on that same row is the period's oracle value (repeated
+        across every config-row for the period).
+      - Every row also feeds the best-static accumulation for its own
+        config, restricted to periods with a finite oracle value, so all
+        three metrics end up computed over the same period universe and
+        achieved/static can never mathematically exceed oracle.
     """
     header = pd.read_csv(sweep_csv, nrows=0)
     columns = list(header.columns)
 
-    period_col = resolve_first_present(columns, SWEEP_PERIOD_CANDIDATES)
+    prev_period_col = resolve_first_present(columns, SWEEP_PREV_PERIOD_CANDIDATES)
     achieved_col = resolve_first_present(columns, SWEEP_ACHIEVED_PPW_CANDIDATES)
     oracle_col = resolve_first_present(columns, SWEEP_ORACLE_PPW_CANDIDATES)
     dim_cols = {}
@@ -181,16 +286,17 @@ def compute_matched_metrics(sweep_csv, achieved_by_period, chunksize=200_000):
                               f"Columns available: {columns}")
         dim_cols[key] = col
 
-    if period_col is None or achieved_col is None or oracle_col is None:
+    if prev_period_col is None or achieved_col is None or oracle_col is None:
         raise ValueError(
             f"Missing required column(s) in {sweep_csv}. "
-            f"period={period_col}, ppw_prev={achieved_col}, oracle PPW_best={oracle_col}"
+            f"period_start_val_prev={prev_period_col}, ppw_prev={achieved_col}, oracle PPW_best={oracle_col}"
         )
 
-    usecols = [period_col, achieved_col, oracle_col] + list(dim_cols.values())
+    usecols = [prev_period_col, achieved_col, oracle_col] + list(dim_cols.values())
     usecols = list(dict.fromkeys(usecols))
 
-    oracle_by_period = {}   # period -> oracle PPW, only for periods also in achieved_by_period
+    oracle_by_period = {}     # period_num -> oracle PPW (finite only)
+    achieved_by_period = {}   # period_num -> achieved PPW of the model's predicted config (finite only)
     static_sum = {}
     static_count = {}
     n_rows = 0
@@ -199,50 +305,74 @@ def compute_matched_metrics(sweep_csv, achieved_by_period, chunksize=200_000):
 
     for chunk in pd.read_csv(sweep_csv, usecols=usecols, chunksize=chunksize):
         n_rows += len(chunk)
-        sweep_periods_seen.update(chunk[period_col].unique())
+        period_nums = pd.to_numeric(chunk[prev_period_col], errors='coerce')
+        sweep_periods_seen.update(period_nums.dropna().unique())
 
-        in_matched = chunk[period_col].isin(achieved_by_period.keys())
-        if not in_matched.any():
+        in_predicted = period_nums.isin(predicted_by_period.keys())
+        if not in_predicted.any():
             continue
-        sub = chunk.loc[in_matched]
+        sub = chunk.loc[in_predicted]
+        sub_periods = period_nums.loc[in_predicted]
 
         oracle_vals = pd.to_numeric(sub[oracle_col], errors='coerce')
         finite_oracle = np.isfinite(oracle_vals)
-        for period, val in zip(sub.loc[finite_oracle, period_col], oracle_vals[finite_oracle]):
+        for period, val in zip(sub_periods[finite_oracle], oracle_vals[finite_oracle]):
             if period not in oracle_by_period:
                 oracle_by_period[period] = val
 
-        # only accumulate static candidates for rows whose period has a
-        # finite oracle value too, so static's period set is a subset of
-        # oracle's period set (same guarantee)
-        row_has_finite_oracle = sub[period_col].isin(oracle_by_period.keys())
+        # restrict further accumulation (achieved-match + static) to rows
+        # whose period has a finite oracle value -- keeps achieved and
+        # static on a subset of oracle's period set, guaranteeing the
+        # inequality
+        row_has_finite_oracle = sub_periods.isin(oracle_by_period.keys())
         sub2 = sub.loc[row_has_finite_oracle]
+        sub2_periods = sub_periods.loc[row_has_finite_oracle]
 
         config_key = pd.Series(
-            list(zip(*[sub2[dim_cols[k]].astype(str) for k in SWEEP_CONFIG_DIMENSIONS])),
+            list(zip(*[sub2[dim_cols[k]].map(normalize_component) for k in SWEEP_CONFIG_DIMENSIONS])),
             index=sub2.index,
         )
-        static_vals = pd.to_numeric(sub2[achieved_col], errors='coerce')
-        finite_static = np.isfinite(static_vals)
-        n_static_dropped += int((~finite_static).sum())
+        achieved_vals = pd.to_numeric(sub2[achieved_col], errors='coerce')
+        finite_achieved = np.isfinite(achieved_vals)
+        n_static_dropped += int((~finite_achieved).sum())
 
-        for key, val in zip(config_key[finite_static], static_vals[finite_static]):
+        # --- achieved: rows whose config matches this period's predicted config ---
+        is_predicted_config = pd.Series(
+            [config_key.iat[i] == predicted_by_period.get(sub2_periods.iat[i])
+             for i in range(len(sub2))],
+            index=sub2.index,
+        )
+        match_mask = is_predicted_config & finite_achieved
+        for period, val in zip(sub2_periods[match_mask], achieved_vals[match_mask]):
+            if period not in achieved_by_period:
+                achieved_by_period[period] = val
+
+        # --- best static: every candidate config's own measured PPW ---
+        for key, val in zip(config_key[finite_achieved], achieved_vals[finite_achieved]):
             static_sum[key] = static_sum.get(key, 0.0) + val
             static_count[key] = static_count.get(key, 0) + 1
 
-    matched_periods = list(oracle_by_period.keys())
+    # matched periods = finite oracle AND the predicted config was actually
+    # found (with a finite measurement) in the sweep for that period
+    matched_periods = [p for p in oracle_by_period if p in achieved_by_period]
     n_matched = len(matched_periods)
 
-    unmatched_in_predictions = set(achieved_by_period.keys()) - sweep_periods_seen
-    if unmatched_in_predictions:
-        print(f"  [WARN] {len(unmatched_in_predictions)} period(s) from the predictions file "
+    periods_predicted_not_in_sweep = set(predicted_by_period.keys()) - sweep_periods_seen
+    if periods_predicted_not_in_sweep:
+        print(f"  [WARN] {len(periods_predicted_not_in_sweep)} period(s) from the predictions file "
               f"were not found at all in the sweep file (period_start format mismatch?).")
+
+    periods_config_not_found = (set(predicted_by_period.keys()) & set(oracle_by_period.keys())) - set(achieved_by_period.keys())
+    if periods_config_not_found:
+        print(f"  [WARN] {len(periods_config_not_found)} period(s) had a finite oracle value but the "
+              f"model's predicted config was not found (or non-finite) among that period's swept rows "
+              f"-- excluded from the achieved/oracle comparison.")
 
     if n_matched == 0:
         oracle_mean = np.nan
         achieved_mean_matched = np.nan
     else:
-        oracle_mean = float(np.mean(list(oracle_by_period.values())))
+        oracle_mean = float(np.mean([oracle_by_period[p] for p in matched_periods]))
         achieved_mean_matched = float(np.mean([achieved_by_period[p] for p in matched_periods]))
 
     if not static_count:
@@ -344,12 +474,12 @@ def main():
     rows = []
     for bench, pred_path, sweep_path in zip(args.benchmark, args.predictions, args.sweep):
         print(f"\n=== {bench} ===")
-        achieved_by_period, achieved_meta = load_achieved_by_period(pred_path, bench)
-        print(f"  Predictions: {achieved_meta['achieved_n_finite']}/{achieved_meta['achieved_n_intervals']} "
-              f"finite intervals")
+        predicted_by_period, pred_meta = load_predicted_config_by_period(pred_path, bench)
+        print(f"  Predictions: {pred_meta['n_with_complete_predicted_config']}/{pred_meta['n_intervals']} "
+              f"intervals with a complete predicted config")
 
-        metrics = compute_matched_metrics(sweep_path, achieved_by_period, chunksize=args.chunksize)
-        print(f"  Matched periods (finite in both predictions and sweep oracle): {metrics['n_matched_periods']}")
+        metrics = compute_matched_metrics(sweep_path, predicted_by_period, chunksize=args.chunksize)
+        print(f"  Matched periods (predicted config found + finite oracle in sweep): {metrics['n_matched_periods']}")
         print(f"  Achieved (model): {metrics['achieved_ppw_mean']:.4e}")
         print(f"  Oracle:           {metrics['oracle_ppw_mean']:.4e}")
         print(f"  Best static:      {metrics['best_static_ppw_mean']:.4e} "
@@ -371,8 +501,7 @@ def main():
             ) if metrics['best_static_ppw_mean'] else np.nan,
             'n_matched_periods': metrics['n_matched_periods'],
             'n_candidate_configs': metrics['n_candidate_configs'],
-            'n_intervals_predicted': achieved_meta['achieved_n_intervals'],
-            'n_dropped_nonfinite_achieved': achieved_meta['achieved_n_dropped_nonfinite'],
+            'n_intervals_predicted': pred_meta['n_intervals'],
             'n_dropped_nonfinite_sweep': metrics['sweep_n_dropped_nonfinite'],
         }
         rows.append(row)
